@@ -266,12 +266,89 @@ class CodexProvider:
     # Tool result validation and repair
     # -------------------------------------------------------------------------
 
+    def _get_block_value(self, block: Any, keys: tuple[str, ...]) -> Any | None:
+        """Extract the first matching value from a dict or object by key name."""
+        if isinstance(block, dict):
+            for key in keys:
+                value = block.get(key)
+                if value:
+                    return value
+            return None
+
+        for key in keys:
+            value = getattr(block, key, None)
+            if value:
+                return value
+        return None
+
+    def _extract_tool_result_metadata(self, msg: Message) -> tuple[str | None, str | None]:
+        """Extract tool_call_id and tool name from a tool result message."""
+        tool_call_id = getattr(msg, "tool_call_id", None)
+        tool_name = getattr(msg, "name", None)
+
+        content = getattr(msg, "content", None)
+        candidates: list[Any] = []
+        if isinstance(content, dict):
+            candidates.append(content)
+        elif isinstance(content, list):
+            candidates.extend(content)
+        elif content is not None:
+            candidates.append(content)
+
+        for candidate in candidates:
+            tool_call_id = tool_call_id or self._get_block_value(
+                candidate, ("tool_call_id", "id", "call_id")
+            )
+            tool_name = tool_name or self._get_block_value(
+                candidate, ("tool", "tool_name", "name")
+            )
+
+        return tool_call_id, tool_name
+
+    def _extract_tool_result_ids_and_names(
+        self, msg: Message
+    ) -> tuple[set[str], set[str]]:
+        """Collect tool result identifiers from a message, if present."""
+        ids: set[str] = set()
+        names: set[str] = set()
+
+        if msg.role == "tool":
+            tool_call_id, tool_name = self._extract_tool_result_metadata(msg)
+            if tool_call_id:
+                ids.add(tool_call_id)
+            if tool_name:
+                names.add(tool_name)
+
+        elif msg.role == "assistant" and isinstance(msg.content, list):
+            for block in msg.content:
+                block_type = None
+                if isinstance(block, dict):
+                    block_type = block.get("type")
+                else:
+                    block_type = getattr(block, "type", None)
+
+                if block_type not in {"tool_result", "tool_output", "tool_response"}:
+                    continue
+
+                tool_call_id = self._get_block_value(
+                    block, ("tool_call_id", "id", "call_id")
+                )
+                tool_name = self._get_block_value(block, ("tool", "tool_name", "name"))
+
+                if tool_call_id:
+                    ids.add(tool_call_id)
+                if tool_name:
+                    names.add(tool_name)
+
+        return ids, names
+
     def _find_missing_tool_results(
         self, messages: list[Message]
     ) -> list[tuple[int, str, str, dict]]:
         """Find tool calls without matching results."""
         tool_calls = {}
         tool_results = set()
+        tool_results_by_name_without_id = set()
 
         for idx, msg in enumerate(messages):
             if msg.role == "assistant" and isinstance(msg.content, list):
@@ -279,15 +356,17 @@ class CodexProvider:
                     if hasattr(block, "type") and block.type == "tool_call":
                         tool_calls[block.id] = (idx, block.name, block.input)
 
-            elif (
-                msg.role == "tool" and hasattr(msg, "tool_call_id") and msg.tool_call_id
-            ):
-                tool_results.add(msg.tool_call_id)
+            result_ids, result_names = self._extract_tool_result_ids_and_names(msg)
+            tool_results.update(result_ids)
+            if result_names and not result_ids:
+                tool_results_by_name_without_id.update(result_names)
 
         return [
             (msg_idx, call_id, name, args)
             for call_id, (msg_idx, name, args) in tool_calls.items()
-            if call_id not in tool_results and call_id not in self._repaired_tool_ids
+            if call_id not in tool_results
+            and call_id not in self._repaired_tool_ids
+            and name not in tool_results_by_name_without_id
         ]
 
     def _create_synthetic_result(self, call_id: str, tool_name: str) -> Message:
@@ -597,8 +676,8 @@ class CodexProvider:
 
     def _format_tool_result(self, msg: Message) -> str:
         """Format a tool result message."""
-        tool_call_id = getattr(msg, "tool_call_id", None)
-        tool_name = getattr(msg, "name", "unknown")
+        tool_call_id, tool_name = self._extract_tool_result_metadata(msg)
+        tool_name = tool_name or "unknown"
         content = self._extract_content(msg)
         is_error = getattr(msg, "is_error", False)
 
