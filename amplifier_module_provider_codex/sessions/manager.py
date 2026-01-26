@@ -38,39 +38,21 @@ class SessionManager:
         if not session_file.exists():
             return None
 
-        with open(session_file) as f:
-            data = json.load(f)
-
-        if "metadata" in data:
-            if "created_at" in data["metadata"]:
-                data["metadata"]["created_at"] = datetime.fromisoformat(
-                    data["metadata"]["created_at"]
-                )
-            if "updated_at" in data["metadata"]:
-                data["metadata"]["updated_at"] = datetime.fromisoformat(
-                    data["metadata"]["updated_at"]
-                )
-
-        return SessionState(**data)
+        try:
+            with open(session_file) as f:
+                data = json.load(f)
+            return SessionState.model_validate(data)
+        except Exception:
+            return None
 
     def save_session(self, session: SessionState) -> Path:
         """Save session to disk."""
         session_file = self.session_dir / f"{session.metadata.session_id}.json"
 
-        data = session.model_dump()
-
-        if "metadata" in data:
-            if "created_at" in data["metadata"]:
-                data["metadata"]["created_at"] = data["metadata"][
-                    "created_at"
-                ].isoformat()
-            if "updated_at" in data["metadata"]:
-                data["metadata"]["updated_at"] = data["metadata"][
-                    "updated_at"
-                ].isoformat()
+        data = session.model_dump(mode="json")
 
         with open(session_file, "w") as f:
-            json.dump(data, f, indent=2, default=str)
+            json.dump(data, f, indent=2)
 
         return session_file
 
