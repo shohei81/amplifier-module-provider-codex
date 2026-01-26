@@ -981,14 +981,24 @@ class CodexProvider:
         """Extract tool calls from <tool_use>...</tool_use> blocks."""
         tool_calls = []
         pattern = r"<tool_use>\s*(.*?)\s*</tool_use>"
-        matches = re.findall(pattern, re.sub(r"```[\s\S]*?```", "", text), re.DOTALL)
+        
+        # Extract blocks first, then clean them up individually
+        matches = re.findall(pattern, text, re.DOTALL)
 
         for match in matches:
-            stripped = match.strip()
-            if not stripped.startswith("{"):
+            # Clean up potential markdown code blocks within the tag
+            content = match.strip()
+            if content.startswith("```"):
+                # Remove starting ```json or ``` and trailing ```
+                content = re.sub(r"^```[a-z]*\n?", "", content)
+                content = re.sub(r"\n?```$", "", content)
+                content = content.strip()
+
+            if not content.startswith("{"):
                 continue
+
             try:
-                tool_data = json.loads(match)
+                tool_data = json.loads(content)
                 tool_call = {
                     "id": tool_data.get("id", f"call_{uuid.uuid4().hex[:8]}"),
                     "name": tool_data.get("tool", tool_data.get("name", "")),
