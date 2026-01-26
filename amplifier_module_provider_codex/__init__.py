@@ -989,9 +989,10 @@ class CodexProvider:
             # Clean up potential markdown code blocks within the tag
             content = match.strip()
             if content.startswith("```"):
-                # Remove starting ```json or ``` and trailing ```
-                content = re.sub(r"^```[a-z]*\n?", "", content)
-                content = re.sub(r"\n?```$", "", content)
+                # Remove starting ```json (case-insensitive) or ``` 
+                content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
+                # Remove trailing ``` with potential whitespace
+                content = re.sub(r"\s*```\s*$", "", content)
                 content = content.strip()
 
             if not content.startswith("{"):

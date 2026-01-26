@@ -147,6 +147,61 @@ def test_codex_tool_call_from_text_filters_invalid():
     assert provider._filtered_tool_calls[0]["name"] == "invalid"
 
 
+def test_codex_tool_call_from_markdown_block():
+    """Test extracting tool calls that are wrapped in markdown code blocks."""
+    provider = CodexProvider(config={})
+    provider._valid_tool_names = {"allowed"}
+    
+    # Test lowercase json
+    text1 = """
+    <tool_use>
+    ```json
+    {
+        "tool": "allowed",
+        "id": "call_1",
+        "input": {"a": 1}
+    }
+    ```
+    </tool_use>
+    """
+    calls1 = provider._extract_tool_calls_from_text(text1)
+    assert len(calls1) == 1
+    assert calls1[0]["name"] == "allowed"
+    assert calls1[0]["arguments"] == {"a": 1}
+
+    # Test uppercase JSON
+    text2 = """
+    <tool_use>
+    ```JSON
+    {
+        "tool": "allowed",
+        "id": "call_2",
+        "input": {"b": 2}
+    }
+    ```
+    </tool_use>
+    """
+    calls2 = provider._extract_tool_calls_from_text(text2)
+    assert len(calls2) == 1
+    assert calls2[0]["id"] == "call_2"
+    
+    # Test whitespace around trailing fence
+    text3 = """
+    <tool_use>
+    ```
+    {
+        "tool": "allowed",
+        "id": "call_3",
+        "input": {"c": 3}
+    }
+      ```   
+    </tool_use>
+    """
+    calls3 = provider._extract_tool_calls_from_text(text3)
+    assert len(calls3) == 1
+    assert calls3[0]["id"] == "call_3"
+
+
 def test_codex_repairs_missing_tool_results(monkeypatch):
     provider = CodexProvider(config={"skip_git_repo_check": True})
     fake_coordinator = FakeCoordinator()
