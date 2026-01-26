@@ -5,7 +5,6 @@ from pathlib import Path
 from datetime import datetime
 
 from amplifier_module_provider_codex.sessions import SessionManager
-from amplifier_module_provider_codex.sessions import SessionState
 
 
 def test_session_save_and_load():

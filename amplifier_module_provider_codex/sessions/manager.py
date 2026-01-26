@@ -9,6 +9,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from .models import SessionMetadata
 from .models import SessionState
 
@@ -42,7 +44,7 @@ class SessionManager:
             with open(session_file) as f:
                 data = json.load(f)
             return SessionState.model_validate(data)
-        except Exception:
+        except (json.JSONDecodeError, ValidationError):
             return None
 
     def save_session(self, session: SessionState) -> Path:
