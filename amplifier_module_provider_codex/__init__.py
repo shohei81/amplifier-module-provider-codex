@@ -439,7 +439,27 @@ class CodexProvider:
                     },
                 )
 
+        # Deduplicate filtered tool calls to avoid repeated rejection notices.
+        filtered_calls = []
+        filtered_keys: set[str] = set()
         for tool_call in previous_filtered_calls:
+            call_id = tool_call.get("id")
+            if call_id:
+                key = f"id:{call_id}"
+            else:
+                try:
+                    args_key = json.dumps(
+                        tool_call.get("arguments", {}), sort_keys=True
+                    )
+                except TypeError:
+                    args_key = str(tool_call.get("arguments", {}))
+                key = f"name:{tool_call.get('name','')}|args:{args_key}"
+            if key in filtered_keys:
+                continue
+            filtered_keys.add(key)
+            filtered_calls.append(tool_call)
+
+        for tool_call in filtered_calls:
             request.messages.append(
                 Message(
                     role="tool",
@@ -963,6 +983,15 @@ class CodexProvider:
         call_id = item.get("id") or item.get("tool_call_id") or item.get("call_id")
 
         if not name:
+            return None
+
+        if self._valid_tool_names and name not in self._valid_tool_names:
+            tool_call = {
+                "id": call_id or f"call_{uuid.uuid4().hex[:8]}",
+                "name": name,
+                "arguments": arguments or {},
+            }
+            self._filtered_tool_calls.append(tool_call)
             return None
 
         if call_id is None:

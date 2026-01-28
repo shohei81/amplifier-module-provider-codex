@@ -132,6 +132,37 @@ def test_codex_tool_call_from_item(monkeypatch):
     assert response.tool_calls[0].arguments == {"q": "test"}
 
 
+def test_codex_tool_call_from_item_filters_invalid(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "tool_call",
+                "id": "call_1",
+                "name": "invalid",
+                "arguments": {"q": "test"},
+            },
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(
+        messages=[Message(role="user", content="Hi")],
+        tools=[{"name": "search", "description": "", "parameters": {}}],
+    )
+    response = asyncio.run(provider.complete(request))
+
+    assert not response.tool_calls
+    assert provider._filtered_tool_calls
+    assert provider._filtered_tool_calls[0]["name"] == "invalid"
+
+
 def test_codex_tool_call_from_text_filters_invalid():
     provider = CodexProvider(config={})
     provider._valid_tool_names = {"allowed"}
@@ -145,6 +176,40 @@ def test_codex_tool_call_from_text_filters_invalid():
     assert calls == []
     assert provider._filtered_tool_calls
     assert provider._filtered_tool_calls[0]["name"] == "invalid"
+
+
+def test_codex_dedupes_filtered_tool_calls_before_injection(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+    provider._filtered_tool_calls = [
+        {"id": "call_dupe", "name": "invalid", "arguments": {}},
+        {"id": "call_dupe", "name": "invalid", "arguments": {}},
+    ]
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "message",
+                "content": [{"type": "output_text", "text": "ok"}],
+            },
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    asyncio.run(provider.complete(request))
+
+    rejected = [
+        msg
+        for msg in request.messages
+        if msg.role == "tool" and msg.content.startswith("[SYSTEM NOTICE: Tool call rejected]")
+    ]
+    assert len(rejected) == 1
+    assert rejected[0].tool_call_id == "call_dupe"
 
 
 def test_codex_tool_call_from_markdown_block():
