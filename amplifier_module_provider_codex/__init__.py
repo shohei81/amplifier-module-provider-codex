@@ -965,6 +965,15 @@ class CodexProvider:
         if not name:
             return None
 
+        if self._valid_tool_names and name not in self._valid_tool_names:
+            tool_call = {
+                "id": call_id or f"call_{uuid.uuid4().hex[:8]}",
+                "name": name,
+                "arguments": arguments or {},
+            }
+            self._filtered_tool_calls.append(tool_call)
+            return None
+
         if call_id is None:
             call_id = f"call_{uuid.uuid4().hex[:8]}"
 
