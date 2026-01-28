@@ -443,11 +443,17 @@ class CodexProvider:
         filtered_calls = []
         filtered_keys: set[str] = set()
         for tool_call in previous_filtered_calls:
-            try:
-                args_key = json.dumps(tool_call.get("arguments", {}), sort_keys=True)
-            except TypeError:
-                args_key = str(tool_call.get("arguments", {}))
-            key = f"name:{tool_call.get('name','')}|args:{args_key}"
+            call_id = tool_call.get("id")
+            if call_id:
+                key = f"id:{call_id}"
+            else:
+                try:
+                    args_key = json.dumps(
+                        tool_call.get("arguments", {}), sort_keys=True
+                    )
+                except TypeError:
+                    args_key = str(tool_call.get("arguments", {}))
+                key = f"name:{tool_call.get('name','')}|args:{args_key}"
             if key in filtered_keys:
                 continue
             filtered_keys.add(key)
