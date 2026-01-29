@@ -341,3 +341,76 @@ def test_codex_does_not_repair_tool_results_without_call_id(monkeypatch):
         e for e in fake_coordinator.hooks.events if e[0] == "provider:tool_sequence_repaired"
     ]
     assert repair_events == []
+
+
+def test_codex_build_command_includes_permission_flags():
+    provider = CodexProvider(
+        config={
+            "profile": "dev",
+            "sandbox": "workspace-write",
+            "full_auto": True,
+            "skip_git_repo_check": True,
+            "search": True,
+            "ask_for_approval": "on-failure",
+            "network_access": True,
+            "add_dir": ["/tmp/extra", "/var/data"],
+        }
+    )
+
+    cmd = provider._build_command("/usr/bin/codex", "gpt-5.2-codex", None)
+
+    assert cmd == [
+        "/usr/bin/codex",
+        "exec",
+        "--json",
+        "--model",
+        "gpt-5.2-codex",
+        "--profile",
+        "dev",
+        "--sandbox",
+        "workspace-write",
+        "--full-auto",
+        "--ask-for-approval",
+        "on-failure",
+        "--search",
+        "--add-dir",
+        "/tmp/extra",
+        "--add-dir",
+        "/var/data",
+        "--config",
+        "sandbox_workspace_write.network_access=true",
+        "--skip-git-repo-check",
+        "-",
+    ]
+
+
+def test_codex_build_command_includes_flags_with_resume():
+    provider = CodexProvider(
+        config={
+            "search": True,
+            "ask_for_approval": "never",
+            "network_access": False,
+            "add_dir": "/tmp/dir",
+            "skip_git_repo_check": False,
+        }
+    )
+
+    cmd = provider._build_command("/usr/bin/codex", "gpt-5.2-codex", "thread_1")
+
+    assert cmd == [
+        "/usr/bin/codex",
+        "exec",
+        "resume",
+        "thread_1",
+        "--json",
+        "--model",
+        "gpt-5.2-codex",
+        "--ask-for-approval",
+        "never",
+        "--search",
+        "--add-dir",
+        "/tmp/dir",
+        "--config",
+        "sandbox_workspace_write.network_access=false",
+        "-",
+    ]

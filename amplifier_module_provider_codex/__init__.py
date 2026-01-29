@@ -167,6 +167,32 @@ class CodexProvider:
         self.sandbox = self.config.get("sandbox")
         self.skip_git_repo_check = self.config.get("skip_git_repo_check", True)
         self.full_auto = self.config.get("full_auto", False)
+        self.search = self.config.get("search", False)
+        self.ask_for_approval = self.config.get("ask_for_approval")
+        self.network_access = self.config.get("network_access")
+
+        raw_add_dir = self.config.get("add_dir")
+        if raw_add_dir is None:
+            self.add_dir: list[str] = []
+        elif isinstance(raw_add_dir, str):
+            self.add_dir = [raw_add_dir]
+        elif isinstance(raw_add_dir, (list, tuple)):
+            self.add_dir = [str(path) for path in raw_add_dir]
+        else:
+            logger.warning(
+                "[PROVIDER] Invalid add_dir config; expected string or list, got %r",
+                type(raw_add_dir).__name__,
+            )
+            self.add_dir = []
+
+        if self.ask_for_approval == "on-request" and not self.full_auto:
+            logger.warning(
+                "[PROVIDER] ask_for_approval=on-request may block non-interactive runs."
+            )
+        if self.sandbox == "danger-full-access":
+            logger.warning(
+                "[PROVIDER] sandbox=danger-full-access is unsafe outside isolated environments."
+            )
 
         # Track repaired tool call IDs to prevent infinite detection loops
         self._repaired_tool_ids: set[str] = set()
@@ -780,27 +806,46 @@ class CodexProvider:
         session_id: str | None,
     ) -> list[str]:
         """Build the Codex CLI command."""
-        cmd: list[str] = [cli_path, "exec", "--json", "--model", model]
-
-        if self.profile:
-            cmd.extend(["--profile", str(self.profile)])
-        if self.sandbox:
-            cmd.extend(["--sandbox", str(self.sandbox)])
-        if self.full_auto:
-            cmd.append("--full-auto")
-        if self.skip_git_repo_check:
-            cmd.append("--skip-git-repo-check")
+        def _append_common_flags(target: list[str]) -> None:
+            if self.profile:
+                target.extend(["--profile", str(self.profile)])
+            if self.sandbox:
+                target.extend(["--sandbox", str(self.sandbox)])
+            if self.full_auto:
+                target.append("--full-auto")
+            if self.ask_for_approval:
+                target.extend(["--ask-for-approval", str(self.ask_for_approval)])
+            if self.search:
+                target.append("--search")
+            for path in self.add_dir:
+                target.extend(["--add-dir", str(path)])
+            if isinstance(self.network_access, bool):
+                value = "true" if self.network_access else "false"
+                target.extend(
+                    ["--config", f"sandbox_workspace_write.network_access={value}"]
+                )
+            elif self.network_access is not None:
+                logger.warning(
+                    "[PROVIDER] Invalid network_access config; expected bool, got %r",
+                    type(self.network_access).__name__,
+                )
+            if self.skip_git_repo_check:
+                target.append("--skip-git-repo-check")
 
         if session_id:
-            cmd = [cli_path, "exec", "resume", session_id, "--json", "--model", model]
-            if self.profile:
-                cmd.extend(["--profile", str(self.profile)])
-            if self.sandbox:
-                cmd.extend(["--sandbox", str(self.sandbox)])
-            if self.full_auto:
-                cmd.append("--full-auto")
-            if self.skip_git_repo_check:
-                cmd.append("--skip-git-repo-check")
+            cmd: list[str] = [
+                cli_path,
+                "exec",
+                "resume",
+                session_id,
+                "--json",
+                "--model",
+                model,
+            ]
+            _append_common_flags(cmd)
+        else:
+            cmd = [cli_path, "exec", "--json", "--model", model]
+            _append_common_flags(cmd)
 
         cmd.append("-")
         return cmd

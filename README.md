@@ -51,9 +51,29 @@ config = {
     skip_git_repo_check = true,
     profile = null,     # Optional Codex CLI profile name
     sandbox = null,     # Optional CLI sandbox mode
-    full_auto = false   # Allow Codex to run commands and edit files
+    full_auto = false,  # Allow Codex to run commands and edit files
+    search = false,     # Optional: enable web search
+    ask_for_approval = null, # Optional: Codex CLI approval policy
+    network_access = null,   # Optional: override network access (bool)
+    add_dir = []        # Optional: additional writable directories
 }
 ```
+
+## Permissions
+
+Codex CLI runs in **read-only** mode by default and **does not require approvals**
+in non-interactive execution. For side-effectful actions, rely on Amplifier tools
+and (optionally) the `hooks-approval` module rather than Codex CLI approvals.
+
+Recommended defaults:
+
+- `sandbox = "read-only"`
+- `full_auto = false`
+- `search = false`
+- `network_access = false` (default when unset)
+
+Use a Codex CLI profile (`profile`) to manage more advanced sandbox and network
+settings, and only escalate to `workspace-write` or `full_auto` when required.
 
 ## Notes
 
