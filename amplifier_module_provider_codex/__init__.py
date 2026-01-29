@@ -819,6 +819,12 @@ class CodexProvider:
 
         allowed = self._allowed_reasoning_efforts_for_model(model)
         if not allowed:
+            logger.warning(
+                "[PROVIDER] Passing through reasoning_effort=%s for unknown model=%s; "
+                "model-specific validation not applied",
+                reasoning_effort,
+                model,
+            )
             return reasoning_effort
 
         if reasoning_effort not in allowed:

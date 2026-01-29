@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 
 from amplifier_core.message_models import ChatRequest
 from amplifier_core.message_models import Message
@@ -389,3 +390,109 @@ def test_codex_allows_none_for_gpt_5_2_models():
     )
 
     assert effort == "none"
+
+
+def test_codex_reasoning_effort_config_precedence_and_fallback():
+    provider = CodexProvider(
+        config={"reasoning_effort": "HIGH", "model_reasoning_effort": "low"}
+    )
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(messages=[Message(role="user", content="Hi")]),
+        model="gpt-5.2-codex",
+    )
+    assert effort == "high"
+
+    fallback = CodexProvider(config={"model_reasoning_effort": "LOW"})
+    effort = fallback._resolve_reasoning_effort(
+        ChatRequest(messages=[Message(role="user", content="Hi")]),
+        model="gpt-5.2-codex",
+    )
+    assert effort == "low"
+
+
+def test_codex_reasoning_effort_hyphenated_keys_and_case_insensitivity():
+    provider = CodexProvider()
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(messages=[Message(role="user", content="Hi")]),
+        model="gpt-5.2-codex",
+        **{"reasoning-effort": "HIGH"},
+    )
+    assert effort == "high"
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning-effort": "LoW"},
+        ),
+        model="gpt-5.2-codex",
+    )
+    assert effort == "low"
+
+
+def test_codex_reasoning_effort_gpt_5_1_validation():
+    provider = CodexProvider()
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning_effort": "none"},
+        ),
+        model="gpt-5.1-codex",
+    )
+    assert effort == "none"
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning_effort": "xhigh"},
+        ),
+        model="gpt-5.1-codex",
+    )
+    assert effort is None
+
+
+def test_codex_reasoning_effort_invalid_value_logs_warning(caplog):
+    provider = CodexProvider()
+
+    with caplog.at_level(logging.WARNING):
+        effort = provider._resolve_reasoning_effort(
+            ChatRequest(
+                messages=[Message(role="user", content="Hi")],
+                metadata={"reasoning_effort": "super"},
+            ),
+            model="gpt-5.2-codex",
+        )
+
+    assert effort is None
+    assert "Ignoring invalid reasoning_effort" in caplog.text
+
+
+def test_codex_reasoning_effort_unknown_model_passthrough_logs_warning(caplog):
+    provider = CodexProvider()
+
+    with caplog.at_level(logging.WARNING):
+        effort = provider._resolve_reasoning_effort(
+            ChatRequest(
+                messages=[Message(role="user", content="Hi")],
+                metadata={"reasoning_effort": "high"},
+            ),
+            model="custom-model",
+        )
+
+    assert effort == "high"
+    assert "Passing through reasoning_effort" in caplog.text
+
+
+def test_codex_builds_resume_command_with_reasoning_effort():
+    provider = CodexProvider()
+
+    cmd = provider._build_command(
+        cli_path="/usr/bin/codex",
+        model="gpt-5.2-codex",
+        session_id="thread_123",
+        reasoning_effort="high",
+    )
+
+    assert "resume" in cmd
+    assert "--config" in cmd
