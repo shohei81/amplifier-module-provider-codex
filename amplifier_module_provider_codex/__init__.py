@@ -62,48 +62,76 @@ DEFAULT_MODEL = "gpt-5.2-codex"
 DEFAULT_TIMEOUT = 300.0
 DEFAULT_MAX_TOKENS = 64000
 
-# Model specifications (Codex CLI recommended list)
+# Model specifications (Codex CLI + GPT-5 family)
 MODELS = {
     "gpt-5.2-codex": {
         "id": "gpt-5.2-codex",
         "display_name": "GPT-5.2-Codex",
-        "context_window": 200000,
-        "max_output_tokens": 64000,
+        "context_window": 400000,
+        "max_output_tokens": 128000,
         "capabilities": ["tools", "streaming"],
     },
     "gpt-5.1-codex-mini": {
         "id": "gpt-5.1-codex-mini",
         "display_name": "GPT-5.1-Codex Mini",
-        "context_window": 200000,
-        "max_output_tokens": 64000,
+        "context_window": 400000,
+        "max_output_tokens": 128000,
         "capabilities": ["tools", "streaming", "fast"],
     },
     "gpt-5.1-codex-max": {
         "id": "gpt-5.1-codex-max",
         "display_name": "GPT-5.1-Codex Max",
-        "context_window": 200000,
-        "max_output_tokens": 64000,
+        "context_window": 400000,
+        "max_output_tokens": 128000,
         "capabilities": ["tools", "streaming"],
     },
     "gpt-5.1-codex": {
         "id": "gpt-5.1-codex",
         "display_name": "GPT-5.1-Codex",
-        "context_window": 200000,
-        "max_output_tokens": 64000,
+        "context_window": 400000,
+        "max_output_tokens": 128000,
         "capabilities": ["tools", "streaming"],
     },
     "gpt-5-codex": {
         "id": "gpt-5-codex",
         "display_name": "GPT-5-Codex",
-        "context_window": 200000,
-        "max_output_tokens": 64000,
+        "context_window": 400000,
+        "max_output_tokens": 128000,
         "capabilities": ["tools", "streaming"],
     },
     "gpt-5-codex-mini": {
         "id": "gpt-5-codex-mini",
         "display_name": "GPT-5-Codex Mini",
+        "context_window": 400000,
+        "max_output_tokens": 128000,
+        "capabilities": ["tools", "streaming", "fast"],
+    },
+    "gpt-5.2": {
+        "id": "gpt-5.2",
+        "display_name": "GPT-5.2",
+        "context_window": 400000,
+        "max_output_tokens": 128000,
+        "capabilities": ["tools", "streaming"],
+    },
+    "gpt-5.1": {
+        "id": "gpt-5.1",
+        "display_name": "GPT-5.1",
+        "context_window": 400000,
+        "max_output_tokens": 128000,
+        "capabilities": ["tools", "streaming"],
+    },
+    "gpt-5": {
+        "id": "gpt-5",
+        "display_name": "GPT-5",
+        "context_window": 400000,
+        "max_output_tokens": 128000,
+        "capabilities": ["tools", "streaming"],
+    },
+    "codex-mini-latest": {
+        "id": "codex-mini-latest",
+        "display_name": "Codex Mini (Latest)",
         "context_window": 200000,
-        "max_output_tokens": 64000,
+        "max_output_tokens": 100000,
         "capabilities": ["tools", "streaming", "fast"],
     },
 }
