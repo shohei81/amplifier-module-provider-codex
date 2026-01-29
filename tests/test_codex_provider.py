@@ -433,6 +433,47 @@ def test_codex_warns_on_danger_full_access_sandbox(caplog):
     assert "sandbox=danger-full-access is unsafe" in caplog.text
 
 
+def test_codex_warns_on_invalid_ask_for_approval_value(caplog):
+    with caplog.at_level(logging.WARNING):
+        provider = CodexProvider(config={"ask_for_approval": "sometimes"})
+
+    assert provider.ask_for_approval is None
+    assert "Invalid ask_for_approval config" in caplog.text
+
+
+def test_codex_warns_on_non_string_ask_for_approval(caplog):
+    with caplog.at_level(logging.WARNING):
+        provider = CodexProvider(config={"ask_for_approval": 123})
+
+    assert provider.ask_for_approval is None
+    assert "Invalid ask_for_approval config" in caplog.text
+
+
+def test_codex_warns_on_network_access_with_non_workspace_sandbox(caplog):
+    provider = CodexProvider(
+        config={
+            "sandbox": "read-only",
+            "network_access": True,
+        }
+    )
+
+    with caplog.at_level(logging.WARNING):
+        cmd = provider._build_command("/usr/bin/codex", "gpt-5.2-codex", None)
+
+    assert "Ignoring network_access" in caplog.text
+    assert "sandbox_workspace_write.network_access" not in cmd
+
+
+def test_codex_warns_on_invalid_network_access_type(caplog):
+    provider = CodexProvider(config={"network_access": "yes"})
+
+    with caplog.at_level(logging.WARNING):
+        cmd = provider._build_command("/usr/bin/codex", "gpt-5.2-codex", None)
+
+    assert "Invalid network_access config" in caplog.text
+    assert "sandbox_workspace_write.network_access" not in cmd
+
+
 def test_codex_builds_command_with_reasoning_effort():
     provider = CodexProvider(config={"reasoning_effort": "low"})
 

@@ -200,7 +200,9 @@ class CodexProvider:
         self.skip_git_repo_check = self.config.get("skip_git_repo_check", True)
         self.full_auto = self.config.get("full_auto", False)
         self.search = self.config.get("search", False)
-        self.ask_for_approval = self.config.get("ask_for_approval")
+        self.ask_for_approval = self._normalize_ask_for_approval(
+            self.config.get("ask_for_approval")
+        )
         self.network_access = self.config.get("network_access")
 
         raw_add_dir = self.config.get("add_dir")
@@ -846,6 +848,29 @@ class CodexProvider:
 
         logger.warning("[PROVIDER] Ignoring invalid reasoning_effort: %s", value)
         return None
+
+    def _normalize_ask_for_approval(self, value: Any | None) -> str | None:
+        if value is None:
+            return None
+
+        if not isinstance(value, str):
+            logger.warning(
+                "[PROVIDER] Invalid ask_for_approval config; expected str, got %r; ignoring.",
+                type(value).__name__,
+            )
+            return None
+
+        normalized = value.strip().lower()
+        allowed = {"untrusted", "on-failure", "on-request", "never"}
+        if normalized not in allowed:
+            logger.warning(
+                "[PROVIDER] Invalid ask_for_approval config; expected one of %s, got %r; ignoring.",
+                sorted(allowed),
+                value,
+            )
+            return None
+
+        return normalized
 
     def _allowed_reasoning_efforts_for_model(
         self, model: str | None
