@@ -62,48 +62,76 @@ DEFAULT_MODEL = "gpt-5.2-codex"
 DEFAULT_TIMEOUT = 300.0
 DEFAULT_MAX_TOKENS = 64000
 
-# Model specifications (Codex CLI recommended list)
+# Model specifications (Codex CLI + GPT-5 family)
 MODELS = {
     "gpt-5.2-codex": {
         "id": "gpt-5.2-codex",
         "display_name": "GPT-5.2-Codex",
-        "context_window": 200000,
-        "max_output_tokens": 64000,
+        "context_window": 400000,
+        "max_output_tokens": 128000,
         "capabilities": ["tools", "streaming"],
     },
     "gpt-5.1-codex-mini": {
         "id": "gpt-5.1-codex-mini",
         "display_name": "GPT-5.1-Codex Mini",
-        "context_window": 200000,
-        "max_output_tokens": 64000,
+        "context_window": 400000,
+        "max_output_tokens": 128000,
         "capabilities": ["tools", "streaming", "fast"],
     },
     "gpt-5.1-codex-max": {
         "id": "gpt-5.1-codex-max",
         "display_name": "GPT-5.1-Codex Max",
-        "context_window": 200000,
-        "max_output_tokens": 64000,
+        "context_window": 400000,
+        "max_output_tokens": 128000,
         "capabilities": ["tools", "streaming"],
     },
     "gpt-5.1-codex": {
         "id": "gpt-5.1-codex",
         "display_name": "GPT-5.1-Codex",
-        "context_window": 200000,
-        "max_output_tokens": 64000,
+        "context_window": 400000,
+        "max_output_tokens": 128000,
         "capabilities": ["tools", "streaming"],
     },
     "gpt-5-codex": {
         "id": "gpt-5-codex",
         "display_name": "GPT-5-Codex",
-        "context_window": 200000,
-        "max_output_tokens": 64000,
+        "context_window": 400000,
+        "max_output_tokens": 128000,
         "capabilities": ["tools", "streaming"],
     },
     "gpt-5-codex-mini": {
         "id": "gpt-5-codex-mini",
         "display_name": "GPT-5-Codex Mini",
+        "context_window": 400000,
+        "max_output_tokens": 128000,
+        "capabilities": ["tools", "streaming", "fast"],
+    },
+    "gpt-5.2": {
+        "id": "gpt-5.2",
+        "display_name": "GPT-5.2",
+        "context_window": 400000,
+        "max_output_tokens": 128000,
+        "capabilities": ["tools", "streaming"],
+    },
+    "gpt-5.1": {
+        "id": "gpt-5.1",
+        "display_name": "GPT-5.1",
+        "context_window": 400000,
+        "max_output_tokens": 128000,
+        "capabilities": ["tools", "streaming"],
+    },
+    "gpt-5": {
+        "id": "gpt-5",
+        "display_name": "GPT-5",
+        "context_window": 400000,
+        "max_output_tokens": 128000,
+        "capabilities": ["tools", "streaming"],
+    },
+    "codex-mini-latest": {
+        "id": "codex-mini-latest",
+        "display_name": "Codex Mini (Latest)",
         "context_window": 200000,
-        "max_output_tokens": 64000,
+        "max_output_tokens": 100000,
         "capabilities": ["tools", "streaming", "fast"],
     },
 }
@@ -161,6 +189,10 @@ class CodexProvider:
         self.timeout = self.config.get("timeout", DEFAULT_TIMEOUT)
         self.debug = self.config.get("debug", False)
         self.max_tokens = self.config.get("max_tokens", DEFAULT_MAX_TOKENS)
+        self.reasoning_effort = self._normalize_reasoning_effort(
+            self.config.get("reasoning_effort")
+            or self.config.get("model_reasoning_effort")
+        )
 
         # Codex CLI flags
         self.profile = self.config.get("profile")
@@ -513,6 +545,9 @@ class CodexProvider:
         )
 
         request_metadata = getattr(request, "metadata", None) or {}
+        reasoning_effort = self._resolve_reasoning_effort(
+            request, model=model, **kwargs
+        )
         existing_session_id = (
             request_metadata.get(METADATA_SESSION_ID) or self._get_codex_session_id()
         )
@@ -526,6 +561,7 @@ class CodexProvider:
             cli_path=cli_path,
             model=model,
             session_id=existing_session_id,
+            reasoning_effort=reasoning_effort,
         )
 
         if system_prompt:
@@ -799,14 +835,110 @@ class CodexProvider:
     # CLI execution
     # -------------------------------------------------------------------------
 
+    def _normalize_reasoning_effort(self, value: Any | None) -> str | None:
+        """Normalize reasoning effort to a supported lowercase value."""
+        if value is None:
+            return None
+
+        normalized = str(value).strip().lower()
+        if normalized in {"none", "minimal", "low", "medium", "high", "xhigh"}:
+            return normalized
+
+        logger.warning("[PROVIDER] Ignoring invalid reasoning_effort: %s", value)
+        return None
+
+    def _allowed_reasoning_efforts_for_model(
+        self, model: str | None
+    ) -> set[str] | None:
+        """Return allowed reasoning effort values for the given model."""
+        if not model:
+            return None
+
+        normalized_model = str(model).strip().lower()
+        if normalized_model.startswith("gpt-5.2"):
+            return {"none", "low", "medium", "high", "xhigh"}
+        if normalized_model.startswith("gpt-5.1"):
+            return {"none", "low", "medium", "high"}
+        if normalized_model.startswith("gpt-5"):
+            return {"minimal", "low", "medium", "high"}
+
+        return None
+
+    def _validate_reasoning_effort_for_model(
+        self, model: str | None, reasoning_effort: str | None
+    ) -> str | None:
+        """Validate reasoning effort against model-specific allowed values."""
+        if not reasoning_effort:
+            return None
+
+        allowed = self._allowed_reasoning_efforts_for_model(model)
+        if not allowed:
+            logger.warning(
+                "[PROVIDER] Passing through reasoning_effort=%s for unknown model=%s; "
+                "model-specific validation not applied",
+                reasoning_effort,
+                model,
+            )
+            return reasoning_effort
+
+        if reasoning_effort not in allowed:
+            logger.warning(
+                "[PROVIDER] Ignoring reasoning_effort=%s for model=%s (allowed: %s)",
+                reasoning_effort,
+                model,
+                ",".join(sorted(allowed)),
+            )
+            return None
+
+        return reasoning_effort
+
+    def _resolve_reasoning_effort(
+        self, request: ChatRequest, model: str | None = None, **kwargs: Any
+    ) -> str | None:
+        """Resolve reasoning effort from kwargs, request metadata, or config."""
+        if "reasoning_effort" in kwargs:
+            return self._validate_reasoning_effort_for_model(
+                model, self._normalize_reasoning_effort(kwargs.get("reasoning_effort"))
+            )
+        if "reasoning-effort" in kwargs:
+            return self._validate_reasoning_effort_for_model(
+                model, self._normalize_reasoning_effort(kwargs.get("reasoning-effort"))
+            )
+
+        request_metadata = getattr(request, "metadata", None) or {}
+        if "reasoning_effort" in request_metadata:
+            return self._validate_reasoning_effort_for_model(
+                model,
+                self._normalize_reasoning_effort(
+                    request_metadata.get("reasoning_effort")
+                ),
+            )
+        if "reasoning-effort" in request_metadata:
+            return self._validate_reasoning_effort_for_model(
+                model,
+                self._normalize_reasoning_effort(
+                    request_metadata.get("reasoning-effort")
+                ),
+            )
+
+        return self._validate_reasoning_effort_for_model(model, self.reasoning_effort)
+
     def _build_command(
         self,
         cli_path: str,
         model: str,
         session_id: str | None,
+        reasoning_effort: str | None = None,
     ) -> list[str]:
         """Build the Codex CLI command."""
         def _append_common_flags(target: list[str]) -> None:
+            if reasoning_effort:
+                target.extend(
+                    [
+                        "--config",
+                        f'model_reasoning_effort="{reasoning_effort}"',
+                    ]
+                )
             if self.profile:
                 target.extend(["--profile", str(self.profile)])
             if self.sandbox:
