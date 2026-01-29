@@ -341,3 +341,51 @@ def test_codex_does_not_repair_tool_results_without_call_id(monkeypatch):
         e for e in fake_coordinator.hooks.events if e[0] == "provider:tool_sequence_repaired"
     ]
     assert repair_events == []
+
+
+def test_codex_builds_command_with_reasoning_effort():
+    provider = CodexProvider(config={"reasoning_effort": "low"})
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning_effort": "high"},
+        ),
+        model="gpt-5.2-codex",
+    )
+
+    cmd = provider._build_command(
+        cli_path="/usr/bin/codex",
+        model="gpt-5.2-codex",
+        session_id=None,
+        reasoning_effort=effort,
+    )
+
+    assert "--config" in cmd
+    idx = cmd.index("--config")
+    assert cmd[idx + 1] == 'model_reasoning_effort="high"'
+
+
+def test_codex_ignores_reasoning_effort_not_supported_by_model():
+    provider = CodexProvider(config={"reasoning_effort": "none"})
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(messages=[Message(role="user", content="Hi")]),
+        model="gpt-5-codex",
+    )
+
+    assert effort is None
+
+
+def test_codex_allows_none_for_gpt_5_2_models():
+    provider = CodexProvider()
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning_effort": "none"},
+        ),
+        model="gpt-5.2-codex",
+    )
+
+    assert effort == "none"

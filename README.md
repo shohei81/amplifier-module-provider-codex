@@ -51,7 +51,8 @@ config = {
     skip_git_repo_check = true,
     profile = null,     # Optional Codex CLI profile name
     sandbox = null,     # Optional CLI sandbox mode
-    full_auto = false   # Allow Codex to run commands and edit files
+    full_auto = false,  # Allow Codex to run commands and edit files
+    reasoning_effort = "medium" # Optional: none | minimal | low | medium | high | xhigh (varies by model)
 }
 ```
 
@@ -60,3 +61,4 @@ config = {
 - Uses Codex CLI sessions for caching when available (`~/.amplifier-codex/sessions`).
 - Tool calls are emitted as `<tool_use>...</tool_use>` blocks and parsed from JSONL.
 - Codex CLI runs in read-only mode by default; set `sandbox` or `full_auto` only if intended.
+- `reasoning_effort` maps to Codex's `model_reasoning_effort` config override and is validated per model.
