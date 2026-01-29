@@ -392,6 +392,7 @@ def test_codex_build_command_includes_flags_with_resume():
             "network_access": False,
             "add_dir": "/tmp/dir",
             "skip_git_repo_check": False,
+            "sandbox": "workspace-write",
         }
     )
 
@@ -405,6 +406,8 @@ def test_codex_build_command_includes_flags_with_resume():
         "--json",
         "--model",
         "gpt-5.2-codex",
+        "--sandbox",
+        "workspace-write",
         "--ask-for-approval",
         "never",
         "--search",
@@ -414,6 +417,20 @@ def test_codex_build_command_includes_flags_with_resume():
         "sandbox_workspace_write.network_access=false",
         "-",
     ]
+
+
+def test_codex_warns_on_ask_for_approval_on_request_without_full_auto(caplog):
+    with caplog.at_level(logging.WARNING):
+        CodexProvider(config={"ask_for_approval": "on-request"})
+
+    assert "ask_for_approval=on-request may block" in caplog.text
+
+
+def test_codex_warns_on_danger_full_access_sandbox(caplog):
+    with caplog.at_level(logging.WARNING):
+        CodexProvider(config={"sandbox": "danger-full-access"})
+
+    assert "sandbox=danger-full-access is unsafe" in caplog.text
 
 
 def test_codex_builds_command_with_reasoning_effort():

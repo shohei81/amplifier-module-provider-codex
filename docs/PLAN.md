@@ -119,14 +119,14 @@ not by Codex CLI, because CLI approvals need a UI.
 Build command in the following order:
 
 1. base: `codex exec --json --model <model>`
-2. `--profile <profile>` if set
-3. `--sandbox <sandbox>` if set
-4. `--full-auto` if set
-5. `--ask-for-approval <policy>` if set (avoid on-request in non-interactive)
-6. `--search` if `search` is true
-7. `--add-dir <path>` for each entry in `add_dir`
-8. `--skip-git-repo-check` if configured (existing)
-9. session resume args (existing logic)
+2. session resume args (inserted immediately after `exec`, before flags; existing logic)
+3. `--profile <profile>` if set
+4. `--sandbox <sandbox>` if set
+5. `--full-auto` if set
+6. `--ask-for-approval <policy>` if set (avoid on-request in non-interactive)
+7. `--search` if `search` is true
+8. `--add-dir <path>` for each entry in `add_dir`
+9. `--skip-git-repo-check` if configured (existing)
 
 ### Config Overrides (Optional)
 

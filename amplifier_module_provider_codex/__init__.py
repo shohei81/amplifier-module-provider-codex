@@ -953,9 +953,19 @@ class CodexProvider:
                 target.extend(["--add-dir", str(path)])
             if isinstance(self.network_access, bool):
                 value = "true" if self.network_access else "false"
-                target.extend(
-                    ["--config", f"sandbox_workspace_write.network_access={value}"]
-                )
+                if self.sandbox is None or str(self.sandbox) == "workspace-write":
+                    target.extend(
+                        ["--config", f"sandbox_workspace_write.network_access={value}"]
+                    )
+                else:
+                    logger.warning(
+                        "[PROVIDER] Ignoring network_access=%s for sandbox=%r; "
+                        "sandbox_workspace_write.network_access override "
+                        "is only applicable when sandbox is unset or "
+                        '"workspace-write".',
+                        value,
+                        self.sandbox,
+                    )
             elif self.network_access is not None:
                 logger.warning(
                     "[PROVIDER] Invalid network_access config; expected bool, got %r",

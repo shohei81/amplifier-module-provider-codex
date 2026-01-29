@@ -75,7 +75,7 @@ Recommended defaults:
 - `sandbox = "read-only"`
 - `full_auto = false`
 - `search = false`
-- `network_access = false` (default when unset)
+- `network_access = null` (unset → use Codex CLI/profile defaults)
 
 Use a Codex CLI profile (`profile`) to manage more advanced sandbox and network
 settings, and only escalate to `workspace-write` or `full_auto` when required.
