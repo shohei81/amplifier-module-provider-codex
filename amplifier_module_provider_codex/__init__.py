@@ -262,6 +262,7 @@ class CodexProvider:
 
         # Valid tool names for filtering invalid tool calls
         self._valid_tool_names: set[str] = set()
+        # Track if tools are enabled for the current request
         self._tools_enabled = False
         # Filtered tool calls fed back to Codex as unavailable
         self._filtered_tool_calls: list[dict[str, Any]] = []
@@ -627,7 +628,9 @@ class CodexProvider:
             },
         )
 
-        response_data = await self._execute_cli(cmd, full_prompt)
+        response_data = await self._execute_cli(
+            cmd, full_prompt, timeout=self.timeout
+        )
 
         response_session_id = response_data.get("metadata", {}).get(METADATA_SESSION_ID)
         if response_session_id:
@@ -1059,141 +1062,166 @@ class CodexProvider:
         cmd.append("-")
         return cmd
 
-    async def _execute_cli(self, cmd: list[str], prompt: str) -> dict[str, Any]:
+    async def _execute_cli(
+        self, cmd: list[str], prompt: str, timeout: float | None = None
+    ) -> dict[str, Any]:
         """Execute Codex CLI and parse JSONL output."""
-        proc = None
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
         try:
-            async with asyncio.timeout(self.timeout):
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
+            if timeout and timeout > 0:
+                async with asyncio.timeout(timeout):
+                    return await self._run_cli(proc, prompt)
+            return await self._run_cli(proc, prompt)
+        except TimeoutError as exc:
+            await self._terminate_process(proc)
+            raise TimeoutError(
+                f"Codex CLI timed out after {timeout:.0f}s"
+            ) from exc
 
-                assert proc.stdin is not None
-                proc.stdin.write(prompt.encode("utf-8"))
-                await proc.stdin.drain()
-                proc.stdin.close()
-                await proc.stdin.wait_closed()
+    async def _run_cli(
+        self, proc: asyncio.subprocess.Process, prompt: str
+    ) -> dict[str, Any]:
+        """Drive the Codex CLI process and parse JSONL output."""
+        assert proc.stdin is not None
+        proc.stdin.write(prompt.encode("utf-8"))
+        await proc.stdin.drain()
+        proc.stdin.close()
+        await proc.stdin.wait_closed()
 
-                response_text = ""
-                usage_data: dict[str, Any] = {}
-                metadata: dict[str, Any] = {}
-                tool_calls: list[dict[str, Any]] = []
-                last_assistant_text = ""
+        response_text = ""
+        usage_data: dict[str, Any] = {}
+        metadata: dict[str, Any] = {}
+        tool_calls: list[dict[str, Any]] = []
+        last_assistant_text = ""
 
-                assert proc.stdout is not None
+        assert proc.stdout is not None
 
-                while True:
-                    line = await proc.stdout.readline()
-                    if not line:
-                        break
-                    line_str = line.decode("utf-8").strip()
-                    if not line_str:
-                        continue
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            line_str = line.decode("utf-8").strip()
+            if not line_str:
+                continue
 
-                    try:
-                        event_data = json.loads(line_str)
-                    except json.JSONDecodeError:
-                        if self.debug:
-                            logger.warning(
-                                "[PROVIDER] Failed to parse JSONL: %s", line_str[:100]
-                            )
-                        continue
-
-                    event_type = event_data.get("type")
-
-                    if event_type == "thread.started":
-                        session_id = event_data.get("thread_id") or event_data.get(
-                            "session_id"
-                        )
-                        if session_id:
-                            metadata[METADATA_SESSION_ID] = session_id
-
-                    elif event_type == "turn.completed":
-                        raw_usage = event_data.get("usage", {}) or {}
-                        usage_data = {
-                            "input_tokens": raw_usage.get("input_tokens", 0),
-                            "output_tokens": raw_usage.get("output_tokens", 0),
-                            "cache_read_input_tokens": raw_usage.get(
-                                "cached_input_tokens",
-                                raw_usage.get("cache_read_input_tokens", 0),
-                            ),
-                            "cache_creation_input_tokens": raw_usage.get(
-                                "cache_creation_input_tokens", 0
-                            ),
-                        }
-
-                    elif event_type == "turn.failed":
-                        error_message = event_data.get("error") or event_data.get(
-                            "message"
-                        )
-                        raise RuntimeError(f"Codex CLI failed turn: {error_message}")
-
-                    elif event_type == "error":
-                        error_message = event_data.get("message") or event_data.get(
-                            "error"
-                        )
-                        raise RuntimeError(f"Codex CLI error: {error_message}")
-
-                    elif isinstance(event_type, str) and event_type.startswith("item."):
-                        item = event_data.get("item", event_data)
-                        item_text, item_tool_calls = self._parse_item(item)
-                        if item_text:
-                            last_assistant_text = item_text
-                            response_text = (
-                                f"{response_text}\n{item_text}".strip()
-                                if response_text
-                                else item_text
-                            )
-                        if item_tool_calls:
-                            tool_calls.extend(item_tool_calls)
-
-                await proc.wait()
-
-                if proc.returncode != 0:
-                    stderr_data = await proc.stderr.read() if proc.stderr else b""
-                    error_msg = stderr_data.decode("utf-8").strip()
-                    if error_msg:
-                        raise RuntimeError(
-                            f"Codex CLI failed (exit {proc.returncode}): {error_msg}"
-                        )
-                    raise RuntimeError(
-                        "Codex CLI failed. Subscription limits or auth may be invalid."
+            try:
+                event_data = json.loads(line_str)
+            except json.JSONDecodeError:
+                if self.debug:
+                    logger.warning(
+                        "[PROVIDER] Failed to parse JSONL: %s", line_str[:100]
                     )
+                continue
 
-                if not response_text and last_assistant_text:
-                    response_text = last_assistant_text
+            event_type = event_data.get("type")
 
-                # De-duplicate tool calls by ID across all events
-                if tool_calls:
-                    seen_ids: set[str] = set()
-                    deduped_calls: list[dict[str, Any]] = []
-                    for tc in tool_calls:
-                        call_id = tc.get("id")
-                        if call_id and call_id in seen_ids:
-                            continue
-                        if call_id:
-                            seen_ids.add(call_id)
-                        deduped_calls.append(tc)
-                    tool_calls = deduped_calls
+            if event_type == "thread.started":
+                session_id = event_data.get("thread_id") or event_data.get("session_id")
+                if session_id:
+                    metadata[METADATA_SESSION_ID] = session_id
 
-                return {
-                    "text": response_text,
-                    "tool_calls": tool_calls,
-                    "usage": usage_data,
-                    "metadata": metadata,
+            elif event_type == "turn.completed":
+                raw_usage = event_data.get("usage", {}) or {}
+                usage_data = {
+                    "input_tokens": raw_usage.get("input_tokens", 0),
+                    "output_tokens": raw_usage.get("output_tokens", 0),
+                    "cache_read_input_tokens": raw_usage.get(
+                        "cached_input_tokens",
+                        raw_usage.get("cache_read_input_tokens", 0),
+                    ),
+                    "cache_creation_input_tokens": raw_usage.get(
+                        "cache_creation_input_tokens", 0
+                    ),
                 }
 
-        except TimeoutError:
-            if proc is not None:
-                proc.kill()
-                await proc.wait()  # Clean up zombie process
+            elif event_type == "turn.failed":
+                error_message = event_data.get("error") or event_data.get("message")
+                raise RuntimeError(f"Codex CLI failed turn: {error_message}")
+
+            elif event_type == "error":
+                error_message = event_data.get("message") or event_data.get("error")
+                raise RuntimeError(f"Codex CLI error: {error_message}")
+
+            elif isinstance(event_type, str) and event_type.startswith("item."):
+                item = event_data.get("item", event_data)
+                item_text, item_tool_calls = self._parse_item(item)
+                if item_text:
+                    last_assistant_text = item_text
+                    response_text = (
+                        f"{response_text}\n{item_text}".strip()
+                        if response_text
+                        else item_text
+                    )
+                if item_tool_calls:
+                    tool_calls.extend(item_tool_calls)
+
+        await proc.wait()
+
+        if proc.returncode != 0:
+            stderr_data = await proc.stderr.read() if proc.stderr else b""
+            error_msg = stderr_data.decode("utf-8").strip()
+            if error_msg:
+                raise RuntimeError(
+                    f"Codex CLI failed (exit {proc.returncode}): {error_msg}"
+                )
             raise RuntimeError(
-                f"Codex CLI timed out after {self.timeout}s. "
-                "Consider increasing timeout or checking network connectivity."
+                "Codex CLI failed. Subscription limits or auth may be invalid."
             )
+
+        if not response_text and last_assistant_text:
+            response_text = last_assistant_text
+
+        # De-duplicate tool calls by ID across all events
+        if tool_calls:
+            seen_ids: set[str] = set()
+            deduped_calls: list[dict[str, Any]] = []
+            for tc in tool_calls:
+                call_id = tc.get("id")
+                if call_id and call_id in seen_ids:
+                    continue
+                if call_id:
+                    seen_ids.add(call_id)
+                deduped_calls.append(tc)
+            tool_calls = deduped_calls
+
+        return {
+            "text": response_text,
+            "tool_calls": tool_calls,
+            "usage": usage_data,
+            "metadata": metadata,
+        }
+
+    async def _terminate_process(self, proc: asyncio.subprocess.Process) -> None:
+        """Terminate a subprocess cleanly after timeout."""
+        if proc.returncode is not None:
+            return
+
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            return
+
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=2)
+            return
+        except asyncio.TimeoutError:
+            pass
+
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            return
+
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=2)
+        except asyncio.TimeoutError:
+            return
 
     def _parse_item(self, item: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
         """Parse a JSONL item event for text and tool calls."""
