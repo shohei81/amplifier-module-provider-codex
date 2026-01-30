@@ -1154,8 +1154,7 @@ class CodexProvider:
                 if item_text:
                     last_assistant_text = item_text
                     response_text = (
-                        f"{response_text}
-{item_text}".strip()
+                        f"{response_text}\n{item_text}".strip()
                         if response_text
                         else item_text
                     )
