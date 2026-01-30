@@ -343,6 +343,7 @@ def test_codex_does_not_repair_tool_results_without_call_id(monkeypatch):
     ]
     assert repair_events == []
 
+
 def test_codex_build_command_includes_permission_flags():
     provider = CodexProvider(
         config={
