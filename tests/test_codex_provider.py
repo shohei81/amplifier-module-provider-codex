@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import pytest
 
 from amplifier_core.message_models import ChatRequest
 from amplifier_core.message_models import Message
@@ -65,6 +66,40 @@ class FakeProcess:
 
     async def wait(self) -> int:
         return self.returncode
+
+
+class HangingStream:
+    async def readline(self) -> bytes:
+        await asyncio.sleep(10)
+        return b""
+
+    async def read(self) -> bytes:
+        await asyncio.sleep(10)
+        return b""
+
+
+class HangingProcess:
+    def __init__(self):
+        self.stdin = FakeStdin()
+        self.stdout = HangingStream()
+        self.stderr = HangingStream()
+        self.returncode = None
+        self.terminated = False
+        self.killed = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = -15
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+
+    async def wait(self) -> int:
+        if self.returncode is not None:
+            return self.returncode
+        await asyncio.sleep(10)
+        return self.returncode or 0
 
 
 def _make_subprocess_stub(lines: list[dict]):
@@ -194,7 +229,7 @@ def test_codex_tool_call_from_item_filters_invalid(monkeypatch):
     assert provider._filtered_tool_calls[0]["name"] == "invalid"
 
 
-def test_codex_tool_call_filtered_when_no_tools(monkeypatch):
+def test_codex_tool_calls_blocked_without_tools(monkeypatch):
     provider = CodexProvider(config={"skip_git_repo_check": True})
 
     monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
@@ -219,6 +254,7 @@ def test_codex_tool_call_filtered_when_no_tools(monkeypatch):
 
     assert not response.tool_calls
     assert provider._filtered_tool_calls
+    assert provider._filtered_tool_calls[0]["name"] == "search"
 
 
 def test_codex_ignores_mcp_tool_calls(monkeypatch):
@@ -389,6 +425,44 @@ def test_codex_repairs_missing_tool_results(monkeypatch):
         Message(
             role="assistant",
             content=[ToolCallBlock(id="call_1", name="do", input={"x": 1})],
+        ),
+        Message(role="user", content="continue"),
+    ]
+    request = ChatRequest(messages=messages)
+
+    asyncio.run(provider.complete(request))
+
+    repair_events = [
+        e for e in fake_coordinator.hooks.events if e[0] == "provider:tool_sequence_repaired"
+    ]
+    assert len(repair_events) == 1
+    assert repair_events[0][1]["repair_count"] == 1
+
+
+def test_codex_repairs_missing_tool_results_from_dict_block(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+    fake_coordinator = FakeCoordinator()
+    provider.coordinator = fake_coordinator
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "message",
+                "content": [{"type": "output_text", "text": "Done"}],
+            },
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    messages = [
+        Message(
+            role="assistant",
+            content=[{"type": "tool_call", "id": "call_1", "name": "do", "input": {"x": 1}}],
         ),
         Message(role="user", content="continue"),
     ]
@@ -607,6 +681,28 @@ def test_codex_warns_on_invalid_network_access_type(caplog):
     assert all(
         "sandbox_workspace_write.network_access" not in arg for arg in cmd
     )
+
+
+def test_codex_times_out_and_terminates_process(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True, "timeout": 0.01})
+
+    process_holder = {}
+
+    async def _stub(*_args, **_kwargs):
+        proc = HangingProcess()
+        process_holder["proc"] = proc
+        return proc
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _stub)
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(provider.complete(request))
+
+    proc = process_holder["proc"]
+    assert proc.terminated or proc.killed
 
 
 def test_codex_builds_command_with_reasoning_effort():
