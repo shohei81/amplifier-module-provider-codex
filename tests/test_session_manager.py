@@ -62,3 +62,24 @@ def test_session_load_schema_mismatch():
         # Try to load it
         session = manager.load_session("mismatch_session")
         assert session is None
+
+
+def test_find_latest_session_by_name():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        manager = SessionManager(session_dir=tmpdir)
+
+        older = manager.create_session(name="alpha")
+        older.add_message("user", "old")
+        manager.save_session(older)
+
+        newer = manager.create_session(name="alpha")
+        newer.add_message("user", "new")
+        manager.save_session(newer)
+
+        other = manager.create_session(name="beta")
+        other.add_message("user", "other")
+        manager.save_session(other)
+
+        found = manager.find_latest_session_by_name("alpha", days_back=7)
+        assert found is not None
+        assert found.metadata.session_id == newer.metadata.session_id

@@ -211,6 +211,15 @@ class CodexProvider:
             self.config.get("reasoning_effort")
             or self.config.get("model_reasoning_effort")
         )
+        self.session_name = self.config.get("session_name", "amplifier-codex")
+        self.reuse_last_session = bool(self.config.get("reuse_last_session", False))
+        self.session_lookup_days = int(self.config.get("session_lookup_days", 30))
+        self.history_max_messages = self._normalize_history_max_messages(
+            self.config.get("history_max_messages")
+        )
+        self.keep_system_messages = bool(
+            self.config.get("keep_system_messages", True)
+        )
 
         # Codex CLI flags
         self.profile = self.config.get("profile")
@@ -255,10 +264,26 @@ class CodexProvider:
         )
 
         amplifier_session_id = self._get_amplifier_session_id()
-        self._session_state = self._session_manager.get_or_create_session(
-            session_id=amplifier_session_id,
-            name=self.config.get("session_name", "amplifier-codex"),
-        )
+        if not amplifier_session_id and self.reuse_last_session:
+            existing_session = self._session_manager.find_latest_session_by_name(
+                self.session_name, days_back=self.session_lookup_days
+            )
+        else:
+            existing_session = None
+
+        if existing_session:
+            self._session_state = existing_session
+            if self.debug:
+                logger.debug(
+                    "[PROVIDER] Reusing session %s by name=%s",
+                    self._session_state.metadata.session_id,
+                    self.session_name,
+                )
+        else:
+            self._session_state = self._session_manager.get_or_create_session(
+                session_id=amplifier_session_id,
+                name=self.session_name,
+            )
 
         # Valid tool names for filtering invalid tool calls
         self._valid_tool_names: set[str] = set()
@@ -339,6 +364,44 @@ class CodexProvider:
             valid_calls.append(tc)
 
         return valid_calls
+
+    def _normalize_history_max_messages(self, value: Any | None) -> int | None:
+        """Normalize history_max_messages to a positive integer."""
+        if value is None:
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            logger.warning(
+                "[PROVIDER] Invalid history_max_messages config; expected int, got %r",
+                value,
+            )
+            return None
+        if parsed <= 0:
+            logger.warning(
+                "[PROVIDER] Invalid history_max_messages config; expected > 0, got %r",
+                parsed,
+            )
+            return None
+        return parsed
+
+    def _apply_history_limit(self, messages: list[Message]) -> list[Message]:
+        """Limit messages to reduce prompt size while preserving system messages."""
+        if not self.history_max_messages:
+            return messages
+        if len(messages) <= self.history_max_messages:
+            return messages
+
+        indexed = list(enumerate(messages))
+        if self.keep_system_messages:
+            system_msgs = [(i, m) for i, m in indexed if m.role == "system"]
+            non_system = [(i, m) for i, m in indexed if m.role != "system"]
+            tail = non_system[-self.history_max_messages :]
+            selected = system_msgs + tail
+            selected.sort(key=lambda pair: pair[0])
+            return [m for _, m in selected]
+
+        return [m for _, m in indexed[-self.history_max_messages :]]
 
     # -------------------------------------------------------------------------
     # Tool result validation and repair
@@ -489,6 +552,18 @@ class CodexProvider:
         # P1-2 fix: Work on a copy to avoid mutating the caller's request.messages
         messages = list(request.messages)
 
+        model = (
+            kwargs.get("model") or getattr(request, "model", None) or self.default_model
+        )
+        request_metadata = getattr(request, "metadata", None) or {}
+        existing_session_id = (
+            request_metadata.get(METADATA_SESSION_ID) or self._get_codex_session_id()
+        )
+        resuming = existing_session_id is not None
+
+        if not resuming:
+            messages = self._apply_history_limit(messages)
+
         missing = self._find_missing_tool_results(messages)
         if missing:
             logger.warning(
@@ -568,18 +643,9 @@ class CodexProvider:
                 "Codex CLI not found. Install with: npm i -g @openai/codex"
             )
 
-        model = (
-            kwargs.get("model") or getattr(request, "model", None) or self.default_model
-        )
-
-        request_metadata = getattr(request, "metadata", None) or {}
         reasoning_effort = self._resolve_reasoning_effort(
             request, model=model, **kwargs
         )
-        existing_session_id = (
-            request_metadata.get(METADATA_SESSION_ID) or self._get_codex_session_id()
-        )
-        resuming = existing_session_id is not None
 
         system_prompt, user_prompt = self._convert_messages(
             messages, request.tools, resuming=resuming

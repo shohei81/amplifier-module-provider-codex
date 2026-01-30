@@ -661,6 +661,26 @@ def test_codex_reasoning_effort_unknown_model_passthrough_logs_warning(caplog):
     assert "Passing through reasoning_effort" in caplog.text
 
 
+def test_codex_history_max_messages_keeps_system():
+    provider = CodexProvider(
+        config={"history_max_messages": 2, "keep_system_messages": True}
+    )
+
+    messages = [
+        Message(role="system", content="sys-1"),
+        Message(role="user", content="u1"),
+        Message(role="assistant", content="a1"),
+        Message(role="user", content="u2"),
+        Message(role="assistant", content="a2"),
+    ]
+    trimmed = provider._apply_history_limit(messages)
+
+    assert len(trimmed) == 3
+    assert trimmed[0].role == "system"
+    assert trimmed[-2].content == "u2"
+    assert trimmed[-1].content == "a2"
+
+
 def test_codex_builds_resume_command_with_reasoning_effort():
     provider = CodexProvider()
 

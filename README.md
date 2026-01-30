@@ -60,7 +60,11 @@ config = {
     ask_for_approval = null, # Optional: Codex CLI approval policy
     network_access = null,   # Optional: override network access (bool)
     add_dir = [],       # Optional: additional writable directories
-    reasoning_effort = "medium" # Optional: none | minimal | low | medium | high | xhigh (varies by model)
+    reasoning_effort = "medium", # Optional: none | minimal | low | medium | high | xhigh (varies by model)
+    reuse_last_session = false,  # Optional: reuse most recent session by name if Amplifier session ID is missing
+    session_lookup_days = 30,    # Optional: days to search when reusing sessions by name
+    history_max_messages = null, # Optional: cap non-resume prompt history for token reduction
+    keep_system_messages = true  # Optional: keep all system messages when truncating history
 }
 ```
 

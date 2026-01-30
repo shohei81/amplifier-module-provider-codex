@@ -80,6 +80,19 @@ class SessionManager:
         sessions.sort(key=lambda x: x.updated_at, reverse=True)
         return sessions
 
+    def find_latest_session_by_name(
+        self, name: str, days_back: int = 30
+    ) -> SessionState | None:
+        """Find the most recent session that matches the given name."""
+        sessions = self.list_sessions(days_back=days_back)
+        for metadata in sessions:
+            if metadata.name != name:
+                continue
+            session = self.load_session(metadata.session_id)
+            if session:
+                return session
+        return None
+
     def cleanup_old_sessions(self, days_to_keep: int = 30) -> int:
         """Remove sessions older than specified days."""
         cutoff = time.time() - (days_to_keep * 86400)
