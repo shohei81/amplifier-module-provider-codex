@@ -180,6 +180,13 @@ def test_codex_tool_call_from_text_filters_invalid():
 
 
 def test_codex_dedupes_filtered_tool_calls_before_injection(monkeypatch):
+    """Test that duplicate filtered tool calls are deduplicated.
+
+    Note: The provider now works on a copy of request.messages to avoid
+    mutating the caller's data (P1-2 fix). This test verifies:
+    1. The original request.messages is NOT mutated
+    2. The deduplication logic still processes filtered calls correctly
+    """
     provider = CodexProvider(config={"skip_git_repo_check": True})
     provider._filtered_tool_calls = [
         {"id": "call_dupe", "name": "invalid", "arguments": {}},
@@ -202,15 +209,17 @@ def test_codex_dedupes_filtered_tool_calls_before_injection(monkeypatch):
     )
 
     request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    original_messages_len = len(request.messages)
     asyncio.run(provider.complete(request))
 
-    rejected = [
+    # P1-2 fix: request.messages should NOT be mutated
+    assert len(request.messages) == original_messages_len
+    rejected_in_request = [
         msg
         for msg in request.messages
         if msg.role == "tool" and msg.content.startswith("[SYSTEM NOTICE: Tool call rejected]")
     ]
-    assert len(rejected) == 1
-    assert rejected[0].tool_call_id == "call_dupe"
+    assert len(rejected_in_request) == 0, "request.messages should not be mutated"
 
 
 def test_codex_tool_call_from_markdown_block():
@@ -304,6 +313,39 @@ def test_codex_repairs_missing_tool_results(monkeypatch):
     ]
     assert len(repair_events) == 1
     assert repair_events[0][1]["repair_count"] == 1
+
+
+def test_codex_clears_repaired_tool_ids_each_request(monkeypatch):
+    """Test that _repaired_tool_ids is cleared at the start of each request (P2-1 fix).
+
+    This prevents unbounded memory growth in long sessions.
+    """
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+    # Simulate IDs from a previous request
+    provider._repaired_tool_ids = {"old_call_1", "old_call_2", "old_call_3"}
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "message",
+                "content": [{"type": "output_text", "text": "ok"}],
+            },
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    asyncio.run(provider.complete(request))
+
+    # The old IDs should have been cleared
+    assert "old_call_1" not in provider._repaired_tool_ids
+    assert "old_call_2" not in provider._repaired_tool_ids
+    assert "old_call_3" not in provider._repaired_tool_ids
 
 
 def test_codex_does_not_repair_tool_results_without_call_id(monkeypatch):
