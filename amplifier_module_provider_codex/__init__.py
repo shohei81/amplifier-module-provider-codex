@@ -22,6 +22,7 @@ import shutil
 import time
 import uuid
 from typing import Any
+from typing import Callable
 
 from amplifier_core import ModelInfo
 from amplifier_core import ModuleCoordinator
@@ -144,12 +145,15 @@ MODELS = {
 
 async def mount(
     coordinator: ModuleCoordinator, config: dict[str, Any] | None = None
-) -> None:
+) -> Callable[[], None] | None:
     """Mount the Codex provider using Codex CLI.
 
     Args:
         coordinator: The module coordinator to mount to.
         config: Optional configuration dictionary.
+
+    Returns:
+        A cleanup callable for resource management, or None if mount failed.
     """
     config = config or {}
 
@@ -161,7 +165,21 @@ async def mount(
     provider = CodexProvider(config=config, coordinator=coordinator)
     await coordinator.mount("providers", provider, name="codex")
     logger.info("Mounted CodexProvider (Codex CLI - non-interactive)")
-    return None
+
+    def cleanup() -> None:
+        """Cleanup provider resources."""
+        # Clear repaired tool IDs to prevent memory leaks
+        provider._repaired_tool_ids.clear()
+        provider._filtered_tool_calls.clear()
+        # Optionally clean up old sessions (keep 7 days by default)
+        try:
+            removed = provider._session_manager.cleanup_old_sessions(days_to_keep=7)
+            if removed > 0:
+                logger.debug("[PROVIDER] Cleaned up %d old sessions", removed)
+        except Exception as e:
+            logger.warning("[PROVIDER] Failed to cleanup old sessions: %s", e)
+
+    return cleanup
 
 
 # -----------------------------------------------------------------------------
