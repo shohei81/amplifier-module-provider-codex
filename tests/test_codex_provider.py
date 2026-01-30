@@ -461,7 +461,9 @@ def test_codex_warns_on_network_access_with_non_workspace_sandbox(caplog):
         cmd = provider._build_command("/usr/bin/codex", "gpt-5.2-codex", None)
 
     assert "Ignoring network_access" in caplog.text
-    assert "sandbox_workspace_write.network_access" not in cmd
+    assert all(
+        "sandbox_workspace_write.network_access" not in arg for arg in cmd
+    )
 
 
 def test_codex_warns_on_invalid_network_access_type(caplog):
@@ -471,7 +473,9 @@ def test_codex_warns_on_invalid_network_access_type(caplog):
         cmd = provider._build_command("/usr/bin/codex", "gpt-5.2-codex", None)
 
     assert "Invalid network_access config" in caplog.text
-    assert "sandbox_workspace_write.network_access" not in cmd
+    assert all(
+        "sandbox_workspace_write.network_access" not in arg for arg in cmd
+    )
 
 
 def test_codex_builds_command_with_reasoning_effort():

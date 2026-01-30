@@ -66,9 +66,11 @@ config = {
 
 ## Permissions
 
-Codex CLI runs in **read-only** mode by default and **does not require approvals**
-in non-interactive execution. For side-effectful actions, rely on Amplifier tools
-and (optionally) the `hooks-approval` module rather than Codex CLI approvals.
+Codex CLI defaults are determined by your Codex CLI profile when `sandbox` is unset.
+We recommend **read-only** for non-interactive runs and **do not rely on Codex CLI
+approvals** in non-interactive execution. For side-effectful actions, rely on
+Amplifier tools and (optionally) the `hooks-approval` module rather than Codex CLI
+approvals.
 
 Recommended defaults:
 
