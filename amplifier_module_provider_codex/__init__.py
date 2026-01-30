@@ -341,7 +341,9 @@ class CodexProvider:
                 return value
         return None
 
-    def _extract_tool_result_metadata(self, msg: Message) -> tuple[str | None, str | None]:
+    def _extract_tool_result_metadata(
+        self, msg: Message
+    ) -> tuple[str | None, str | None]:
         """Extract tool_call_id and tool name from a tool result message."""
         tool_call_id = getattr(msg, "tool_call_id", None)
         tool_name = getattr(msg, "name", None)
@@ -463,7 +465,13 @@ class CodexProvider:
         previous_filtered_calls = self._filtered_tool_calls.copy()
         self._filtered_tool_calls = []
 
-        missing = self._find_missing_tool_results(request.messages)
+        # P2-1 fix: Clear repaired IDs at start of each request to prevent unbounded growth
+        self._repaired_tool_ids.clear()
+
+        # P1-2 fix: Work on a copy to avoid mutating the caller's request.messages
+        messages = list(request.messages)
+
+        missing = self._find_missing_tool_results(messages)
         if missing:
             logger.warning(
                 "[PROVIDER] Codex: Detected %d missing tool result(s). Injecting synthetic errors.",
@@ -484,7 +492,7 @@ class CodexProvider:
 
                 insert_pos = msg_idx + 1
                 for i, synthetic in enumerate(synthetics):
-                    request.messages.insert(insert_pos + i, synthetic)
+                    messages.insert(insert_pos + i, synthetic)
 
             if self.coordinator and hasattr(self.coordinator, "hooks"):
                 await self.coordinator.hooks.emit(
@@ -513,14 +521,14 @@ class CodexProvider:
                     )
                 except TypeError:
                     args_key = str(tool_call.get("arguments", {}))
-                key = f"name:{tool_call.get('name','')}|args:{args_key}"
+                key = f"name:{tool_call.get('name', '')}|args:{args_key}"
             if key in filtered_keys:
                 continue
             filtered_keys.add(key)
             filtered_calls.append(tool_call)
 
         for tool_call in filtered_calls:
-            request.messages.append(
+            messages.append(
                 Message(
                     role="tool",
                     content=(
@@ -556,7 +564,7 @@ class CodexProvider:
         resuming = existing_session_id is not None
 
         system_prompt, user_prompt = self._convert_messages(
-            request.messages, request.tools, resuming=resuming
+            messages, request.tools, resuming=resuming
         )
 
         cmd = self._build_command(
@@ -580,7 +588,7 @@ class CodexProvider:
             {
                 "provider": self.name,
                 "model": model,
-                "messages_count": len(request.messages),
+                "messages_count": len(messages),
                 "tools_count": len(request.tools) if request.tools else 0,
                 "resume_session": existing_session_id is not None,
             },
@@ -956,6 +964,7 @@ class CodexProvider:
         reasoning_effort: str | None = None,
     ) -> list[str]:
         """Build the Codex CLI command."""
+
         def _append_common_flags(target: list[str]) -> None:
             if reasoning_effort:
                 target.extend(
@@ -1222,7 +1231,7 @@ class CodexProvider:
         """Extract tool calls from <tool_use>...</tool_use> blocks."""
         tool_calls = []
         pattern = r"<tool_use>\s*(.*?)\s*</tool_use>"
-        
+
         # Extract blocks first, then clean them up individually
         matches = re.findall(pattern, text, re.DOTALL)
 
@@ -1230,7 +1239,7 @@ class CodexProvider:
             # Clean up potential markdown code blocks within the tag
             content = match.strip()
             if content.startswith("```"):
-                # Remove starting ```json (case-insensitive) or ``` 
+                # Remove starting ```json (case-insensitive) or ```
                 content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
                 # Remove trailing ``` with potential whitespace
                 content = re.sub(r"\s*```\s*$", "", content)
