@@ -262,6 +262,7 @@ class CodexProvider:
 
         # Valid tool names for filtering invalid tool calls
         self._valid_tool_names: set[str] = set()
+        self._tools_enabled = False
         # Filtered tool calls fed back to Codex as unavailable
         self._filtered_tool_calls: list[dict[str, Any]] = []
 
@@ -327,18 +328,10 @@ class CodexProvider:
         ]
 
     def parse_tool_calls(self, response: ChatResponse) -> list[ToolCall]:
-        """Parse tool calls from response and filter empty arguments."""
+        """Parse tool calls from response."""
         if not response.tool_calls:
             return []
-
-        valid_calls = []
-        for tc in response.tool_calls:
-            if not tc.arguments:
-                logger.debug("Filtering out tool '%s' with empty arguments", tc.name)
-                continue
-            valid_calls.append(tc)
-
-        return valid_calls
+        return list(response.tool_calls)
 
     # -------------------------------------------------------------------------
     # Tool result validation and repair
@@ -433,8 +426,29 @@ class CodexProvider:
         for idx, msg in enumerate(messages):
             if msg.role == "assistant" and isinstance(msg.content, list):
                 for block in msg.content:
-                    if hasattr(block, "type") and block.type == "tool_call":
-                        tool_calls[block.id] = (idx, block.name, block.input)
+                    if isinstance(block, dict):
+                        block_type = block.get("type")
+                        if block_type not in {"tool_call", "tool_use"}:
+                            continue
+                        call_id = block.get("id")
+                        if call_id:
+                            tool_calls[call_id] = (
+                                idx,
+                                block.get("name", ""),
+                                block.get("input", {}),
+                            )
+                        continue
+
+                    block_type = getattr(block, "type", None)
+                    if block_type not in {"tool_call", "tool_use"}:
+                        continue
+                    call_id = getattr(block, "id", None)
+                    if call_id:
+                        tool_calls[call_id] = (
+                            idx,
+                            getattr(block, "name", ""),
+                            getattr(block, "input", {}),
+                        )
 
             result_ids, result_names = self._extract_tool_result_ids_and_names(msg)
             tool_results.update(result_ids)
@@ -473,6 +487,7 @@ class CodexProvider:
     async def complete(self, request: ChatRequest, **kwargs: Any) -> ChatResponse:
         """Execute a completion request via Codex CLI (codex exec)."""
         self._valid_tool_names = set()
+        self._tools_enabled = bool(request.tools)
         if request.tools:
             for tool in request.tools:
                 if hasattr(tool, "name"):
@@ -1046,118 +1061,139 @@ class CodexProvider:
 
     async def _execute_cli(self, cmd: list[str], prompt: str) -> dict[str, Any]:
         """Execute Codex CLI and parse JSONL output."""
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        proc = None
+        try:
+            async with asyncio.timeout(self.timeout):
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
 
-        assert proc.stdin is not None
-        proc.stdin.write(prompt.encode("utf-8"))
-        await proc.stdin.drain()
-        proc.stdin.close()
-        await proc.stdin.wait_closed()
+                assert proc.stdin is not None
+                proc.stdin.write(prompt.encode("utf-8"))
+                await proc.stdin.drain()
+                proc.stdin.close()
+                await proc.stdin.wait_closed()
 
-        response_text = ""
-        usage_data: dict[str, Any] = {}
-        metadata: dict[str, Any] = {}
-        tool_calls: list[dict[str, Any]] = []
-        last_assistant_text = ""
+                response_text = ""
+                usage_data: dict[str, Any] = {}
+                metadata: dict[str, Any] = {}
+                tool_calls: list[dict[str, Any]] = []
+                last_assistant_text = ""
 
-        assert proc.stdout is not None
+                assert proc.stdout is not None
 
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            line_str = line.decode("utf-8").strip()
-            if not line_str:
-                continue
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        break
+                    line_str = line.decode("utf-8").strip()
+                    if not line_str:
+                        continue
 
-            try:
-                event_data = json.loads(line_str)
-            except json.JSONDecodeError:
-                if self.debug:
-                    logger.warning(
-                        "[PROVIDER] Failed to parse JSONL: %s", line_str[:100]
+                    try:
+                        event_data = json.loads(line_str)
+                    except json.JSONDecodeError:
+                        if self.debug:
+                            logger.warning(
+                                "[PROVIDER] Failed to parse JSONL: %s", line_str[:100]
+                            )
+                        continue
+
+                    event_type = event_data.get("type")
+
+                    if event_type == "thread.started":
+                        session_id = event_data.get("thread_id") or event_data.get(
+                            "session_id"
+                        )
+                        if session_id:
+                            metadata[METADATA_SESSION_ID] = session_id
+
+                    elif event_type == "turn.completed":
+                        raw_usage = event_data.get("usage", {}) or {}
+                        usage_data = {
+                            "input_tokens": raw_usage.get("input_tokens", 0),
+                            "output_tokens": raw_usage.get("output_tokens", 0),
+                            "cache_read_input_tokens": raw_usage.get(
+                                "cached_input_tokens",
+                                raw_usage.get("cache_read_input_tokens", 0),
+                            ),
+                            "cache_creation_input_tokens": raw_usage.get(
+                                "cache_creation_input_tokens", 0
+                            ),
+                        }
+
+                    elif event_type == "turn.failed":
+                        error_message = event_data.get("error") or event_data.get(
+                            "message"
+                        )
+                        raise RuntimeError(f"Codex CLI failed turn: {error_message}")
+
+                    elif event_type == "error":
+                        error_message = event_data.get("message") or event_data.get(
+                            "error"
+                        )
+                        raise RuntimeError(f"Codex CLI error: {error_message}")
+
+                    elif isinstance(event_type, str) and event_type.startswith("item."):
+                        item = event_data.get("item", event_data)
+                        item_text, item_tool_calls = self._parse_item(item)
+                        if item_text:
+                            last_assistant_text = item_text
+                            response_text = (
+                                f"{response_text}\n{item_text}".strip()
+                                if response_text
+                                else item_text
+                            )
+                        if item_tool_calls:
+                            tool_calls.extend(item_tool_calls)
+
+                await proc.wait()
+
+                if proc.returncode != 0:
+                    stderr_data = await proc.stderr.read() if proc.stderr else b""
+                    error_msg = stderr_data.decode("utf-8").strip()
+                    if error_msg:
+                        raise RuntimeError(
+                            f"Codex CLI failed (exit {proc.returncode}): {error_msg}"
+                        )
+                    raise RuntimeError(
+                        "Codex CLI failed. Subscription limits or auth may be invalid."
                     )
-                continue
 
-            event_type = event_data.get("type")
+                if not response_text and last_assistant_text:
+                    response_text = last_assistant_text
 
-            if event_type == "thread.started":
-                session_id = event_data.get("thread_id") or event_data.get("session_id")
-                if session_id:
-                    metadata[METADATA_SESSION_ID] = session_id
+                # De-duplicate tool calls by ID across all events
+                if tool_calls:
+                    seen_ids: set[str] = set()
+                    deduped_calls: list[dict[str, Any]] = []
+                    for tc in tool_calls:
+                        call_id = tc.get("id")
+                        if call_id and call_id in seen_ids:
+                            continue
+                        if call_id:
+                            seen_ids.add(call_id)
+                        deduped_calls.append(tc)
+                    tool_calls = deduped_calls
 
-            elif event_type == "turn.completed":
-                raw_usage = event_data.get("usage", {}) or {}
-                usage_data = {
-                    "input_tokens": raw_usage.get("input_tokens", 0),
-                    "output_tokens": raw_usage.get("output_tokens", 0),
-                    "cache_read_input_tokens": raw_usage.get(
-                        "cached_input_tokens",
-                        raw_usage.get("cache_read_input_tokens", 0),
-                    ),
+                return {
+                    "text": response_text,
+                    "tool_calls": tool_calls,
+                    "usage": usage_data,
+                    "metadata": metadata,
                 }
 
-            elif event_type == "turn.failed":
-                error_message = event_data.get("error") or event_data.get("message")
-                raise RuntimeError(f"Codex CLI failed turn: {error_message}")
-
-            elif event_type == "error":
-                error_message = event_data.get("message") or event_data.get("error")
-                raise RuntimeError(f"Codex CLI error: {error_message}")
-
-            elif isinstance(event_type, str) and event_type.startswith("item."):
-                item = event_data.get("item", event_data)
-                item_text, item_tool_calls = self._parse_item(item)
-                if item_text:
-                    last_assistant_text = item_text
-                    response_text = (
-                        f"{response_text}\n{item_text}".strip()
-                        if response_text
-                        else item_text
-                    )
-                if item_tool_calls:
-                    tool_calls.extend(item_tool_calls)
-
-        await proc.wait()
-
-        if proc.returncode != 0:
-            stderr_data = await proc.stderr.read() if proc.stderr else b""
-            error_msg = stderr_data.decode("utf-8").strip()
-            if error_msg:
-                raise RuntimeError(
-                    f"Codex CLI failed (exit {proc.returncode}): {error_msg}"
-                )
+        except TimeoutError:
+            if proc is not None:
+                proc.kill()
+                await proc.wait()  # Clean up zombie process
             raise RuntimeError(
-                "Codex CLI failed. Subscription limits or auth may be invalid."
+                f"Codex CLI timed out after {self.timeout}s. "
+                "Consider increasing timeout or checking network connectivity."
             )
-
-        if not response_text and last_assistant_text:
-            response_text = last_assistant_text
-
-        # De-duplicate tool calls by ID across all events
-        if tool_calls:
-            seen_ids: set[str] = set()
-            deduped_calls: list[dict[str, Any]] = []
-            for tc in tool_calls:
-                call_id = tc.get("id")
-                if call_id and call_id in seen_ids:
-                    continue
-                if call_id:
-                    seen_ids.add(call_id)
-                deduped_calls.append(tc)
-            tool_calls = deduped_calls
-
-        return {
-            "text": response_text,
-            "tool_calls": tool_calls,
-            "usage": usage_data,
-            "metadata": metadata,
-        }
 
     def _parse_item(self, item: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
         """Parse a JSONL item event for text and tool calls."""
@@ -1170,7 +1206,7 @@ class CodexProvider:
             for text in self._extract_tool_calls_from_text("\n".join(text_parts)):
                 tool_calls.append(text)
 
-        if item_type in {"tool_call", "tool_use", "tool", "mcp_tool_call"}:
+        if item_type in {"tool_call", "tool_use", "tool"}:
             tool_call = self._normalize_tool_call(item)
             if tool_call:
                 tool_calls.append(tool_call)
@@ -1224,22 +1260,22 @@ class CodexProvider:
         if not name:
             return None
 
-        if self._valid_tool_names and name not in self._valid_tool_names:
+        normalized_arguments = self._normalize_tool_arguments(arguments)
+
+        if not self._tools_enabled or (
+            self._valid_tool_names and name not in self._valid_tool_names
+        ):
             tool_call = {
                 "id": call_id or f"call_{uuid.uuid4().hex[:8]}",
                 "name": name,
-                "arguments": arguments or {},
+                "arguments": normalized_arguments,
             }
             self._filtered_tool_calls.append(tool_call)
             return None
 
         if call_id is None:
             call_id = f"call_{uuid.uuid4().hex[:8]}"
-
-        if arguments is None:
-            arguments = {}
-
-        return {"id": call_id, "name": name, "arguments": arguments}
+        return {"id": call_id, "name": name, "arguments": normalized_arguments}
 
     # -------------------------------------------------------------------------
     # Response building
@@ -1268,13 +1304,17 @@ class CodexProvider:
 
             try:
                 tool_data = json.loads(content)
+                raw_arguments = tool_data.get(
+                    "input", tool_data.get("arguments", {})
+                )
+                normalized_arguments = self._normalize_tool_arguments(raw_arguments)
                 tool_call = {
                     "id": tool_data.get("id", f"call_{uuid.uuid4().hex[:8]}"),
                     "name": tool_data.get("tool", tool_data.get("name", "")),
-                    "arguments": tool_data.get("input", tool_data.get("arguments", {})),
+                    "arguments": normalized_arguments,
                 }
 
-                if (
+                if not self._tools_enabled or (
                     self._valid_tool_names
                     and tool_call["name"] not in self._valid_tool_names
                 ):
@@ -1286,6 +1326,22 @@ class CodexProvider:
                 continue
 
         return tool_calls
+
+    def _normalize_tool_arguments(self, arguments: Any) -> dict[str, Any]:
+        """Normalize tool arguments into a dict payload."""
+        if arguments is None:
+            return {}
+        if isinstance(arguments, dict):
+            return arguments
+        if isinstance(arguments, str):
+            try:
+                parsed = json.loads(arguments)
+            except json.JSONDecodeError:
+                return {"_raw": arguments}
+            if isinstance(parsed, dict):
+                return parsed
+            return {"_value": parsed}
+        return {"_value": arguments}
 
     def _clean_response_text(self, text: str) -> str:
         """Remove tool_use blocks from response text."""

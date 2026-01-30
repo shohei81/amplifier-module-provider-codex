@@ -133,6 +133,36 @@ def test_codex_tool_call_from_item(monkeypatch):
     assert response.tool_calls[0].arguments == {"q": "test"}
 
 
+def test_codex_tool_call_from_item_parses_string_arguments(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "tool_call",
+                "id": "call_1",
+                "name": "search",
+                "arguments": "{\"q\": \"test\"}",
+            },
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(
+        messages=[Message(role="user", content="Hi")],
+        tools=[{"name": "search", "description": "", "parameters": {}}],
+    )
+    response = asyncio.run(provider.complete(request))
+
+    assert response.tool_calls
+    assert response.tool_calls[0].arguments == {"q": "test"}
+
+
 def test_codex_tool_call_from_item_filters_invalid(monkeypatch):
     provider = CodexProvider(config={"skip_git_repo_check": True})
 
@@ -164,9 +194,66 @@ def test_codex_tool_call_from_item_filters_invalid(monkeypatch):
     assert provider._filtered_tool_calls[0]["name"] == "invalid"
 
 
+def test_codex_tool_call_filtered_when_no_tools(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "tool_call",
+                "id": "call_1",
+                "name": "search",
+                "arguments": {"q": "test"},
+            },
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    response = asyncio.run(provider.complete(request))
+
+    assert not response.tool_calls
+    assert provider._filtered_tool_calls
+
+
+def test_codex_ignores_mcp_tool_calls(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "mcp_tool_call",
+                "id": "mcp_1",
+                "name": "web_search",
+                "arguments": {"query": "test"},
+            },
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(
+        messages=[Message(role="user", content="Hi")],
+        tools=[{"name": "search", "description": "", "parameters": {}}],
+    )
+    response = asyncio.run(provider.complete(request))
+
+    assert not response.tool_calls
+
+
 def test_codex_tool_call_from_text_filters_invalid():
     provider = CodexProvider(config={})
     provider._valid_tool_names = {"allowed"}
+    provider._tools_enabled = True
 
     text = (
         "Here is a tool call:\n"
@@ -226,6 +313,7 @@ def test_codex_tool_call_from_markdown_block():
     """Test extracting tool calls that are wrapped in markdown code blocks."""
     provider = CodexProvider(config={})
     provider._valid_tool_names = {"allowed"}
+    provider._tools_enabled = True
     
     # Test lowercase json
     text1 = """
