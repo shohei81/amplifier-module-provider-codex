@@ -253,6 +253,7 @@ def test_codex_ignores_mcp_tool_calls(monkeypatch):
 def test_codex_tool_call_from_text_filters_invalid():
     provider = CodexProvider(config={})
     provider._valid_tool_names = {"allowed"}
+    provider._tools_enabled = True
 
     text = (
         "Here is a tool call:\n"
@@ -312,6 +313,7 @@ def test_codex_tool_call_from_markdown_block():
     """Test extracting tool calls that are wrapped in markdown code blocks."""
     provider = CodexProvider(config={})
     provider._valid_tool_names = {"allowed"}
+    provider._tools_enabled = True
     
     # Test lowercase json
     text1 = """
