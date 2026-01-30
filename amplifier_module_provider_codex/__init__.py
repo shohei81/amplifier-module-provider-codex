@@ -1120,6 +1120,9 @@ class CodexProvider:
                                 "cached_input_tokens",
                                 raw_usage.get("cache_read_input_tokens", 0),
                             ),
+                            "cache_creation_input_tokens": raw_usage.get(
+                                "cache_creation_input_tokens", 0
+                            ),
                         }
 
                     elif event_type == "turn.failed":
