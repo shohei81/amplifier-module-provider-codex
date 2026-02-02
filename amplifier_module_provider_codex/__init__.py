@@ -1234,10 +1234,11 @@ class CodexProvider:
         item_type = item.get("type") or item.get("item_type")
         if item_type in {"message", "assistant_message", "agent_message", "assistant"}:
             text_parts.extend(self._extract_text_from_item(item))
+            tool_calls.extend(self._extract_tool_calls_from_content(item))
             for text in self._extract_tool_calls_from_text("\n".join(text_parts)):
                 tool_calls.append(text)
 
-        if item_type in {"tool_call", "tool_use", "tool"}:
+        if item_type in {"tool_call", "tool_use", "tool", "function_call"}:
             tool_call = self._normalize_tool_call(item)
             if tool_call:
                 tool_calls.append(tool_call)
@@ -1246,6 +1247,7 @@ class CodexProvider:
         message = item.get("message")
         if isinstance(message, dict):
             text_parts.extend(self._extract_text_from_item(message))
+            tool_calls.extend(self._extract_tool_calls_from_content(message))
             for text in self._extract_tool_calls_from_text("\n".join(text_parts)):
                 tool_calls.append(text)
 
@@ -1281,6 +1283,27 @@ class CodexProvider:
             texts.append(content)
 
         return [t for t in texts if t]
+
+    def _extract_tool_calls_from_content(self, item: dict[str, Any]) -> list[dict[str, Any]]:
+        """Extract structured tool calls from message content blocks."""
+        tool_calls: list[dict[str, Any]] = []
+        content = item.get("content")
+        if not isinstance(content, list):
+            return tool_calls
+
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+
+            block_type = block.get("type")
+            if block_type not in {"tool_call", "tool_use", "function_call"}:
+                continue
+
+            tool_call = self._normalize_tool_call(block)
+            if tool_call:
+                tool_calls.append(tool_call)
+
+        return tool_calls
 
     def _normalize_tool_call(self, item: dict[str, Any]) -> dict[str, Any] | None:
         """Normalize tool call fields from JSONL item."""

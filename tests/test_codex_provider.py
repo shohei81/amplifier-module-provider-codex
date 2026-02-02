@@ -198,6 +198,76 @@ def test_codex_tool_call_from_item_parses_string_arguments(monkeypatch):
     assert response.tool_calls[0].arguments == {"q": "test"}
 
 
+def test_codex_tool_call_from_message_content_block(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "message",
+                "content": [
+                    {"type": "output_text", "text": "Calling tool"},
+                    {
+                        "type": "tool_call",
+                        "id": "call_1",
+                        "name": "search",
+                        "arguments": {"q": "test"},
+                    },
+                ],
+            },
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(
+        messages=[Message(role="user", content="Hi")],
+        tools=[{"name": "search", "description": "", "parameters": {}}],
+    )
+    response = asyncio.run(provider.complete(request))
+
+    assert response.tool_calls
+    assert response.tool_calls[0].id == "call_1"
+    assert response.tool_calls[0].name == "search"
+    assert response.tool_calls[0].arguments == {"q": "test"}
+
+
+def test_codex_function_call_item_type_supported(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "search",
+                "arguments": "{\"q\": \"test\"}",
+            },
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(
+        messages=[Message(role="user", content="Hi")],
+        tools=[{"name": "search", "description": "", "parameters": {}}],
+    )
+    response = asyncio.run(provider.complete(request))
+
+    assert response.tool_calls
+    assert response.tool_calls[0].id == "call_1"
+    assert response.tool_calls[0].name == "search"
+    assert response.tool_calls[0].arguments == {"q": "test"}
+
+
 def test_codex_tool_call_from_item_filters_invalid(monkeypatch):
     provider = CodexProvider(config={"skip_git_repo_check": True})
 
