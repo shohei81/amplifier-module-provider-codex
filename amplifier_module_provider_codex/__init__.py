@@ -1259,11 +1259,22 @@ class CodexProvider:
 
         stderr_data = b""
         if not stderr_task.done():
-            stderr_data = await stderr_task
-        elif not stderr_task.cancelled():
+            try:
+                stderr_data = await stderr_task
+            except Exception as exc:
+                logger.warning(
+                    "[PROVIDER] Failed to read stderr from Codex CLI: %s",
+                    exc,
+                )
+        elif not stderr_task.cancelled() and stderr_task.exception() is None:
             stderr_data = stderr_task.result()
+        elif stderr_task.exception() is not None:
+            logger.warning(
+                "[PROVIDER] Failed to read stderr from Codex CLI: %s",
+                stderr_task.exception(),
+            )
         if proc.returncode != 0:
-            error_msg = stderr_data.decode("utf-8").strip()
+            error_msg = stderr_data.decode("utf-8", errors="replace").strip()
             if error_msg:
                 raise RuntimeError(
                     f"Codex CLI failed (exit {proc.returncode}): {error_msg}"

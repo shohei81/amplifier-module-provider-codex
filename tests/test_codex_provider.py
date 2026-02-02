@@ -500,6 +500,62 @@ def test_codex_surfaces_stderr_on_nonzero_exit(monkeypatch):
         asyncio.run(provider.complete(request))
 
 
+def test_codex_decodes_stderr_with_replacement_on_non_utf8(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        _make_subprocess_stub_with_stderr(
+            lines=[],
+            returncode=1,
+            stderr_lines=[b"\xff\xfe"],
+        ),
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    with pytest.raises(RuntimeError, match="Codex CLI failed \\(exit 1\\):"):
+        asyncio.run(provider.complete(request))
+
+
+def test_codex_handles_stderr_read_failure_gracefully(monkeypatch, caplog):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    class BrokenStderrStream:
+        async def readline(self) -> bytes:
+            return b""
+
+        async def read(self) -> bytes:
+            raise RuntimeError("stderr read failed")
+
+    class ProcessWithBrokenStderr:
+        def __init__(self):
+            self.stdin = FakeStdin()
+            self.stdout = FakeStream([])
+            self.stderr = BrokenStderrStream()
+            self.returncode = 1
+
+        async def wait(self) -> int:
+            return self.returncode
+
+    async def _stub(*_args, **_kwargs):
+        return ProcessWithBrokenStderr()
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _stub)
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(
+            RuntimeError,
+            match="Subscription limits or auth may be invalid",
+        ):
+            asyncio.run(provider.complete(request))
+
+    assert "Failed to read stderr from Codex CLI" in caplog.text
+
+
 def test_codex_tool_calls_blocked_without_tools(monkeypatch):
     provider = CodexProvider(config={"skip_git_repo_check": True})
 
