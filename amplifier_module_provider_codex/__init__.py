@@ -15,6 +15,7 @@ __all__ = [
 __amplifier_module_type__ = "provider"
 
 import asyncio
+from contextlib import suppress
 import json
 import logging
 import re
@@ -592,6 +593,9 @@ class CodexProvider:
         reasoning_effort = self._resolve_reasoning_effort(
             request, model=model, **kwargs
         )
+        reasoning_effort = self._adjust_reasoning_effort_for_search(
+            model=model, reasoning_effort=reasoning_effort
+        )
         existing_session_id = (
             request_metadata.get(METADATA_SESSION_ID) or self._get_codex_session_id()
         )
@@ -992,6 +996,20 @@ class CodexProvider:
 
         return self._validate_reasoning_effort_for_model(model, self.reasoning_effort)
 
+    def _adjust_reasoning_effort_for_search(
+        self, model: str | None, reasoning_effort: str | None
+    ) -> str | None:
+        """Adjust reasoning effort for known tool compatibility constraints."""
+        if not self.search or reasoning_effort != "minimal":
+            return reasoning_effort
+
+        logger.warning(
+            "[PROVIDER] search=true is incompatible with reasoning_effort=minimal "
+            "for model=%s; using reasoning_effort=low instead.",
+            model,
+        )
+        return "low"
+
     def _build_command(
         self,
         cli_path: str,
@@ -1001,7 +1019,21 @@ class CodexProvider:
     ) -> list[str]:
         """Build the Codex CLI command."""
 
-        def _append_common_flags(target: list[str]) -> None:
+        global_flags: list[str] = []
+        if self.profile:
+            global_flags.extend(["--profile", str(self.profile)])
+        if self.sandbox:
+            global_flags.extend(["--sandbox", str(self.sandbox)])
+        if self.full_auto:
+            global_flags.append("--full-auto")
+        if self.ask_for_approval:
+            global_flags.extend(["--ask-for-approval", str(self.ask_for_approval)])
+        if self.search:
+            global_flags.append("--search")
+        for path in self.add_dir:
+            global_flags.extend(["--add-dir", str(path)])
+
+        def _append_exec_flags(target: list[str]) -> None:
             if reasoning_effort:
                 target.extend(
                     [
@@ -1009,18 +1041,6 @@ class CodexProvider:
                         f'model_reasoning_effort="{reasoning_effort}"',
                     ]
                 )
-            if self.profile:
-                target.extend(["--profile", str(self.profile)])
-            if self.sandbox:
-                target.extend(["--sandbox", str(self.sandbox)])
-            if self.full_auto:
-                target.append("--full-auto")
-            if self.ask_for_approval:
-                target.extend(["--ask-for-approval", str(self.ask_for_approval)])
-            if self.search:
-                target.append("--search")
-            for path in self.add_dir:
-                target.extend(["--add-dir", str(path)])
             if isinstance(self.network_access, bool):
                 value = "true" if self.network_access else "false"
                 if self.sandbox is None or str(self.sandbox) == "workspace-write":
@@ -1044,20 +1064,21 @@ class CodexProvider:
             if self.skip_git_repo_check:
                 target.append("--skip-git-repo-check")
 
+        cmd_prefix = [cli_path, *global_flags, "exec"]
+
         if session_id:
             cmd: list[str] = [
-                cli_path,
-                "exec",
+                *cmd_prefix,
                 "resume",
                 session_id,
                 "--json",
                 "--model",
                 model,
             ]
-            _append_common_flags(cmd)
+            _append_exec_flags(cmd)
         else:
-            cmd = [cli_path, "exec", "--json", "--model", model]
-            _append_common_flags(cmd)
+            cmd = [*cmd_prefix, "--json", "--model", model]
+            _append_exec_flags(cmd)
 
         cmd.append("-")
         return cmd
@@ -1099,73 +1120,161 @@ class CodexProvider:
         metadata: dict[str, Any] = {}
         tool_calls: list[dict[str, Any]] = []
         last_assistant_text = ""
+        streamed_text_deltas: list[str] = []
 
         assert proc.stdout is not None
+        assert proc.stderr is not None
+        stderr_task = asyncio.create_task(proc.stderr.read())
 
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            line_str = line.decode("utf-8").strip()
-            if not line_str:
-                continue
+        try:
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                line_str = line.decode("utf-8", errors="replace").strip()
+                if not line_str:
+                    continue
+                if line_str.startswith("data:"):
+                    line_str = line_str[5:].strip()
+                    if not line_str or line_str == "[DONE]":
+                        continue
 
-            try:
-                event_data = json.loads(line_str)
-            except json.JSONDecodeError:
-                if self.debug:
-                    logger.warning(
-                        "[PROVIDER] Failed to parse JSONL: %s", line_str[:100]
+                try:
+                    event_data = json.loads(line_str)
+                except json.JSONDecodeError:
+                    if self.debug:
+                        logger.warning(
+                            "[PROVIDER] Failed to parse JSONL: %s", line_str[:100]
+                        )
+                    continue
+
+                event_type = event_data.get("type")
+
+                if event_type == "thread.started":
+                    session_id = event_data.get("thread_id") or event_data.get(
+                        "session_id"
                     )
-                continue
+                    if session_id:
+                        metadata[METADATA_SESSION_ID] = session_id
 
-            event_type = event_data.get("type")
+                elif event_type == "turn.completed":
+                    raw_usage = event_data.get("usage", {}) or {}
+                    usage_data = {
+                        "input_tokens": raw_usage.get("input_tokens", 0),
+                        "output_tokens": raw_usage.get("output_tokens", 0),
+                        "cache_read_input_tokens": raw_usage.get(
+                            "cached_input_tokens",
+                            raw_usage.get("cache_read_input_tokens", 0),
+                        ),
+                        "cache_creation_input_tokens": raw_usage.get(
+                            "cache_creation_input_tokens", 0
+                        ),
+                    }
 
-            if event_type == "thread.started":
-                session_id = event_data.get("thread_id") or event_data.get("session_id")
-                if session_id:
-                    metadata[METADATA_SESSION_ID] = session_id
+                elif event_type == "response.completed":
+                    response_payload = event_data.get("response", {}) or {}
+                    raw_usage = response_payload.get("usage", {}) or {}
+                    usage_data = {
+                        "input_tokens": raw_usage.get("input_tokens", 0),
+                        "output_tokens": raw_usage.get("output_tokens", 0),
+                        "cache_read_input_tokens": raw_usage.get(
+                            "cached_input_tokens",
+                            raw_usage.get("cache_read_input_tokens", 0),
+                        ),
+                        "cache_creation_input_tokens": raw_usage.get(
+                            "cache_creation_input_tokens", 0
+                        ),
+                    }
 
-            elif event_type == "turn.completed":
-                raw_usage = event_data.get("usage", {}) or {}
-                usage_data = {
-                    "input_tokens": raw_usage.get("input_tokens", 0),
-                    "output_tokens": raw_usage.get("output_tokens", 0),
-                    "cache_read_input_tokens": raw_usage.get(
-                        "cached_input_tokens",
-                        raw_usage.get("cache_read_input_tokens", 0),
-                    ),
-                    "cache_creation_input_tokens": raw_usage.get(
-                        "cache_creation_input_tokens", 0
-                    ),
-                }
+                    # Fallback: parse final output items if item-level events were absent.
+                    if not response_text and not tool_calls:
+                        output_items = response_payload.get("output", [])
+                        if isinstance(output_items, list):
+                            for output_item in output_items:
+                                if not isinstance(output_item, dict):
+                                    continue
+                                item_text, item_tool_calls = self._parse_item(
+                                    output_item
+                                )
+                                if item_text:
+                                    last_assistant_text = item_text
+                                    response_text = (
+                                        f"{response_text}\n{item_text}".strip()
+                                        if response_text
+                                        else item_text
+                                    )
+                                if item_tool_calls:
+                                    tool_calls.extend(item_tool_calls)
 
-            elif event_type == "turn.failed":
-                error_message = event_data.get("error") or event_data.get("message")
-                raise RuntimeError(f"Codex CLI failed turn: {error_message}")
+                elif event_type == "turn.failed":
+                    error_message = event_data.get("error") or event_data.get("message")
+                    raise RuntimeError(f"Codex CLI failed turn: {error_message}")
 
-            elif event_type == "error":
-                error_message = event_data.get("message") or event_data.get("error")
-                raise RuntimeError(f"Codex CLI error: {error_message}")
+                elif event_type in {"error", "response.error"}:
+                    error_message = event_data.get("message") or event_data.get("error")
+                    raise RuntimeError(f"Codex CLI error: {error_message}")
 
-            elif isinstance(event_type, str) and event_type.startswith("item."):
-                item = event_data.get("item", event_data)
-                item_text, item_tool_calls = self._parse_item(item)
-                if item_text:
-                    last_assistant_text = item_text
-                    response_text = (
-                        f"{response_text}\n{item_text}".strip()
-                        if response_text
-                        else item_text
-                    )
-                if item_tool_calls:
-                    tool_calls.extend(item_tool_calls)
+                elif event_type == "response.output_text.delta":
+                    delta = event_data.get("delta")
+                    if isinstance(delta, str) and delta:
+                        streamed_text_deltas.append(delta)
+
+                elif event_type in {
+                    "response.output_item.added",
+                    "response.output_item.done",
+                }:
+                    item = event_data.get("item")
+                    if isinstance(item, dict):
+                        item_text, item_tool_calls = self._parse_item(item)
+                        if item_text:
+                            last_assistant_text = item_text
+                            response_text = (
+                                f"{response_text}\n{item_text}".strip()
+                                if response_text
+                                else item_text
+                            )
+                        if item_tool_calls:
+                            tool_calls.extend(item_tool_calls)
+
+                elif isinstance(event_type, str) and event_type.startswith("item."):
+                    item = event_data.get("item", event_data)
+                    item_text, item_tool_calls = self._parse_item(item)
+                    if item_text:
+                        last_assistant_text = item_text
+                        response_text = (
+                            f"{response_text}\n{item_text}".strip()
+                            if response_text
+                            else item_text
+                        )
+                    if item_tool_calls:
+                        tool_calls.extend(item_tool_calls)
+        except Exception:
+            if not stderr_task.done():
+                stderr_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await stderr_task
+            raise
 
         await proc.wait()
 
+        stderr_data = b""
+        if not stderr_task.done():
+            try:
+                stderr_data = await stderr_task
+            except Exception as exc:
+                logger.warning(
+                    "[PROVIDER] Failed to read stderr from Codex CLI: %s",
+                    exc,
+                )
+        elif not stderr_task.cancelled() and stderr_task.exception() is None:
+            stderr_data = stderr_task.result()
+        elif stderr_task.exception() is not None:
+            logger.warning(
+                "[PROVIDER] Failed to read stderr from Codex CLI: %s",
+                stderr_task.exception(),
+            )
         if proc.returncode != 0:
-            stderr_data = await proc.stderr.read() if proc.stderr else b""
-            error_msg = stderr_data.decode("utf-8").strip()
+            error_msg = stderr_data.decode("utf-8", errors="replace").strip()
             if error_msg:
                 raise RuntimeError(
                     f"Codex CLI failed (exit {proc.returncode}): {error_msg}"
@@ -1176,6 +1285,8 @@ class CodexProvider:
 
         if not response_text and last_assistant_text:
             response_text = last_assistant_text
+        if not response_text and streamed_text_deltas:
+            response_text = "".join(streamed_text_deltas).strip()
 
         # De-duplicate tool calls by ID across all events
         if tool_calls:
@@ -1231,10 +1342,11 @@ class CodexProvider:
         item_type = item.get("type") or item.get("item_type")
         if item_type in {"message", "assistant_message", "agent_message", "assistant"}:
             text_parts.extend(self._extract_text_from_item(item))
+            tool_calls.extend(self._extract_tool_calls_from_content(item))
             for text in self._extract_tool_calls_from_text("\n".join(text_parts)):
                 tool_calls.append(text)
 
-        if item_type in {"tool_call", "tool_use", "tool"}:
+        if item_type in {"tool_call", "tool_use", "tool", "function_call"}:
             tool_call = self._normalize_tool_call(item)
             if tool_call:
                 tool_calls.append(tool_call)
@@ -1243,6 +1355,7 @@ class CodexProvider:
         message = item.get("message")
         if isinstance(message, dict):
             text_parts.extend(self._extract_text_from_item(message))
+            tool_calls.extend(self._extract_tool_calls_from_content(message))
             for text in self._extract_tool_calls_from_text("\n".join(text_parts)):
                 tool_calls.append(text)
 
@@ -1278,6 +1391,27 @@ class CodexProvider:
             texts.append(content)
 
         return [t for t in texts if t]
+
+    def _extract_tool_calls_from_content(self, item: dict[str, Any]) -> list[dict[str, Any]]:
+        """Extract structured tool calls from message content blocks."""
+        tool_calls: list[dict[str, Any]] = []
+        content = item.get("content")
+        if not isinstance(content, list):
+            return tool_calls
+
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+
+            block_type = block.get("type")
+            if block_type not in {"tool_call", "tool_use", "function_call"}:
+                continue
+
+            tool_call = self._normalize_tool_call(block)
+            if tool_call:
+                tool_calls.append(tool_call)
+
+        return tool_calls
 
     def _normalize_tool_call(self, item: dict[str, Any]) -> dict[str, Any] | None:
         """Normalize tool call fields from JSONL item."""

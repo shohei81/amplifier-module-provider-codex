@@ -62,3 +62,19 @@ def test_session_load_schema_mismatch():
         # Try to load it
         session = manager.load_session("mismatch_session")
         assert session is None
+
+
+def test_get_or_create_session_uses_provided_session_id_when_missing():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        manager = SessionManager(session_dir=tmpdir)
+
+        session = manager.get_or_create_session(
+            session_id="amplifier-session-123",
+            name="persistent",
+        )
+        assert session.metadata.session_id == "amplifier-session-123"
+
+        manager.save_session(session)
+        loaded = manager.load_session("amplifier-session-123")
+        assert loaded is not None
+        assert loaded.metadata.session_id == "amplifier-session-123"

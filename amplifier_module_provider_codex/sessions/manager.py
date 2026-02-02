@@ -28,10 +28,16 @@ class SessionManager:
         self.session_dir.mkdir(parents=True, exist_ok=True)
 
     def create_session(
-        self, name: str = "unnamed", tags: list[str] | None = None
+        self,
+        name: str = "unnamed",
+        tags: list[str] | None = None,
+        session_id: str | None = None,
     ) -> SessionState:
         """Create a new session."""
-        metadata = SessionMetadata(name=name, tags=tags or [])
+        metadata_kwargs: dict[str, Any] = {"name": name, "tags": tags or []}
+        if session_id:
+            metadata_kwargs["session_id"] = session_id
+        metadata = SessionMetadata(**metadata_kwargs)
         return SessionState(metadata=metadata)
 
     def load_session(self, session_id: str) -> SessionState | None:
@@ -108,7 +114,7 @@ class SessionManager:
             if session:
                 return session
 
-        return self.create_session(name=name, tags=tags)
+        return self.create_session(name=name, tags=tags, session_id=session_id)
 
     def find_by_codex_session_id(self, codex_session_id: str) -> SessionState | None:
         """Find a session by its Codex CLI session ID."""
