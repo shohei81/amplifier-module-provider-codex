@@ -299,6 +299,94 @@ def test_codex_tool_call_from_item_filters_invalid(monkeypatch):
     assert provider._filtered_tool_calls[0]["name"] == "invalid"
 
 
+def test_codex_parses_response_output_item_done(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "content": [{"type": "output_text", "text": "Hello from response event"}],
+            },
+        },
+        {
+            "type": "response.completed",
+            "response": {"usage": {"input_tokens": 12, "output_tokens": 3}},
+        },
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    response = asyncio.run(provider.complete(request))
+
+    assert response.text == "Hello from response event"
+    assert response.usage.input_tokens == 12
+    assert response.usage.output_tokens == 3
+
+
+def test_codex_parses_function_call_from_response_output_item_done(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "search",
+                "arguments": "{\"q\": \"test\"}",
+            },
+        },
+        {
+            "type": "response.completed",
+            "response": {"usage": {"input_tokens": 5, "output_tokens": 1}},
+        },
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(
+        messages=[Message(role="user", content="Hi")],
+        tools=[{"name": "search", "description": "", "parameters": {}}],
+    )
+    response = asyncio.run(provider.complete(request))
+
+    assert response.tool_calls
+    assert response.tool_calls[0].id == "call_1"
+    assert response.tool_calls[0].name == "search"
+    assert response.tool_calls[0].arguments == {"q": "test"}
+
+
+def test_codex_falls_back_to_response_output_text_delta(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {"type": "response.output_text.delta", "delta": "Hello"},
+        {"type": "response.output_text.delta", "delta": " world"},
+        {
+            "type": "response.completed",
+            "response": {"usage": {"input_tokens": 4, "output_tokens": 2}},
+        },
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    response = asyncio.run(provider.complete(request))
+
+    assert response.text == "Hello world"
+    assert response.usage.input_tokens == 4
+    assert response.usage.output_tokens == 2
+
+
 def test_codex_tool_calls_blocked_without_tools(monkeypatch):
     provider = CodexProvider(config={"skip_git_repo_check": True})
 

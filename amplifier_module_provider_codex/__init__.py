@@ -1119,6 +1119,7 @@ class CodexProvider:
         metadata: dict[str, Any] = {}
         tool_calls: list[dict[str, Any]] = []
         last_assistant_text = ""
+        streamed_text_deltas: list[str] = []
 
         assert proc.stdout is not None
 
@@ -1160,6 +1161,39 @@ class CodexProvider:
                     ),
                 }
 
+            elif event_type == "response.completed":
+                response_payload = event_data.get("response", {}) or {}
+                raw_usage = response_payload.get("usage", {}) or {}
+                usage_data = {
+                    "input_tokens": raw_usage.get("input_tokens", 0),
+                    "output_tokens": raw_usage.get("output_tokens", 0),
+                    "cache_read_input_tokens": raw_usage.get(
+                        "cached_input_tokens",
+                        raw_usage.get("cache_read_input_tokens", 0),
+                    ),
+                    "cache_creation_input_tokens": raw_usage.get(
+                        "cache_creation_input_tokens", 0
+                    ),
+                }
+
+                # Fallback: parse final output items if item-level events were absent.
+                if not response_text and not tool_calls:
+                    output_items = response_payload.get("output", [])
+                    if isinstance(output_items, list):
+                        for output_item in output_items:
+                            if not isinstance(output_item, dict):
+                                continue
+                            item_text, item_tool_calls = self._parse_item(output_item)
+                            if item_text:
+                                last_assistant_text = item_text
+                                response_text = (
+                                    f"{response_text}\n{item_text}".strip()
+                                    if response_text
+                                    else item_text
+                                )
+                            if item_tool_calls:
+                                tool_calls.extend(item_tool_calls)
+
             elif event_type == "turn.failed":
                 error_message = event_data.get("error") or event_data.get("message")
                 raise RuntimeError(f"Codex CLI failed turn: {error_message}")
@@ -1167,6 +1201,25 @@ class CodexProvider:
             elif event_type == "error":
                 error_message = event_data.get("message") or event_data.get("error")
                 raise RuntimeError(f"Codex CLI error: {error_message}")
+
+            elif event_type == "response.output_text.delta":
+                delta = event_data.get("delta")
+                if isinstance(delta, str) and delta:
+                    streamed_text_deltas.append(delta)
+
+            elif event_type in {"response.output_item.added", "response.output_item.done"}:
+                item = event_data.get("item")
+                if isinstance(item, dict):
+                    item_text, item_tool_calls = self._parse_item(item)
+                    if item_text:
+                        last_assistant_text = item_text
+                        response_text = (
+                            f"{response_text}\n{item_text}".strip()
+                            if response_text
+                            else item_text
+                        )
+                    if item_tool_calls:
+                        tool_calls.extend(item_tool_calls)
 
             elif isinstance(event_type, str) and event_type.startswith("item."):
                 item = event_data.get("item", event_data)
@@ -1196,6 +1249,8 @@ class CodexProvider:
 
         if not response_text and last_assistant_text:
             response_text = last_assistant_text
+        if not response_text and streamed_text_deltas:
+            response_text = "".join(streamed_text_deltas).strip()
 
         # De-duplicate tool calls by ID across all events
         if tool_calls:
