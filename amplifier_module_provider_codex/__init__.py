@@ -1002,14 +1002,18 @@ class CodexProvider:
         """Build the Codex CLI command."""
 
         global_flags: list[str] = []
+        if self.profile:
+            global_flags.extend(["--profile", str(self.profile)])
+        if self.sandbox:
+            global_flags.extend(["--sandbox", str(self.sandbox)])
+        if self.full_auto:
+            global_flags.append("--full-auto")
         if self.ask_for_approval:
-            # `codex exec` does not accept --ask-for-approval directly.
-            # It must be passed as a top-level codex flag.
             global_flags.extend(["--ask-for-approval", str(self.ask_for_approval)])
         if self.search:
-            # `codex exec` does not accept --search directly.
-            # It must be passed as a top-level codex flag.
             global_flags.append("--search")
+        for path in self.add_dir:
+            global_flags.extend(["--add-dir", str(path)])
 
         def _append_exec_flags(target: list[str]) -> None:
             if reasoning_effort:
@@ -1019,14 +1023,6 @@ class CodexProvider:
                         f'model_reasoning_effort="{reasoning_effort}"',
                     ]
                 )
-            if self.profile:
-                target.extend(["--profile", str(self.profile)])
-            if self.sandbox:
-                target.extend(["--sandbox", str(self.sandbox)])
-            if self.full_auto:
-                target.append("--full-auto")
-            for path in self.add_dir:
-                target.extend(["--add-dir", str(path)])
             if isinstance(self.network_access, bool):
                 value = "true" if self.network_access else "false"
                 if self.sandbox is None or str(self.sandbox) == "workspace-write":

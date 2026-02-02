@@ -566,22 +566,22 @@ def test_codex_build_command_includes_permission_flags():
 
     assert cmd == [
         "/usr/bin/codex",
-        "--ask-for-approval",
-        "on-failure",
-        "--search",
-        "exec",
-        "--json",
-        "--model",
-        "gpt-5.2-codex",
         "--profile",
         "dev",
         "--sandbox",
         "workspace-write",
         "--full-auto",
+        "--ask-for-approval",
+        "on-failure",
+        "--search",
         "--add-dir",
         "/tmp/extra",
         "--add-dir",
         "/var/data",
+        "exec",
+        "--json",
+        "--model",
+        "gpt-5.2-codex",
         "--config",
         "sandbox_workspace_write.network_access=true",
         "--skip-git-repo-check",
@@ -605,30 +605,56 @@ def test_codex_build_command_includes_flags_with_resume():
 
     assert cmd == [
         "/usr/bin/codex",
+        "--sandbox",
+        "workspace-write",
         "--ask-for-approval",
         "never",
         "--search",
+        "--add-dir",
+        "/tmp/dir",
         "exec",
         "resume",
         "thread_1",
         "--json",
         "--model",
         "gpt-5.2-codex",
-        "--sandbox",
-        "workspace-write",
-        "--add-dir",
-        "/tmp/dir",
         "--config",
         "sandbox_workspace_write.network_access=false",
         "-",
     ]
 
 
+def test_codex_resume_does_not_receive_global_only_flags():
+    provider = CodexProvider(
+        config={
+            "profile": "dev",
+            "sandbox": "workspace-write",
+            "search": True,
+            "ask_for_approval": "never",
+            "add_dir": ["/tmp/extra"],
+        }
+    )
+
+    cmd = provider._build_command("/usr/bin/codex", "gpt-5.2-codex", "thread_1")
+    resume_idx = cmd.index("resume")
+    after_resume = cmd[resume_idx + 1 :]
+
+    assert "--profile" not in after_resume
+    assert "--sandbox" not in after_resume
+    assert "--search" not in after_resume
+    assert "--ask-for-approval" not in after_resume
+    assert "--add-dir" not in after_resume
+
+
 def test_codex_places_global_flags_before_exec():
     provider = CodexProvider(
         config={
+            "profile": "dev",
+            "sandbox": "workspace-write",
+            "full_auto": True,
             "search": True,
             "ask_for_approval": "never",
+            "add_dir": ["/tmp/a"],
         }
     )
 
@@ -639,8 +665,16 @@ def test_codex_places_global_flags_before_exec():
 
     assert "--search" in before_exec
     assert "--ask-for-approval" in before_exec
+    assert "--profile" in before_exec
+    assert "--sandbox" in before_exec
+    assert "--full-auto" in before_exec
+    assert "--add-dir" in before_exec
     assert "--search" not in after_exec
     assert "--ask-for-approval" not in after_exec
+    assert "--profile" not in after_exec
+    assert "--sandbox" not in after_exec
+    assert "--full-auto" not in after_exec
+    assert "--add-dir" not in after_exec
 
 
 def test_codex_warns_on_ask_for_approval_on_request_without_full_auto(caplog):
