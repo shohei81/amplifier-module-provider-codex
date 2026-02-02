@@ -68,6 +68,18 @@ class FakeProcess:
         return self.returncode
 
 
+class FakeRawProcess:
+    def __init__(self, lines: list[bytes], returncode: int = 0):
+        self.stdin = FakeStdin()
+        encoded = [line if line.endswith(b"\n") else line + b"\n" for line in lines]
+        self.stdout = FakeStream(encoded)
+        self.stderr = FakeStream([])
+        self.returncode = returncode
+
+    async def wait(self) -> int:
+        return self.returncode
+
+
 class HangingStream:
     async def readline(self) -> bytes:
         await asyncio.sleep(10)
@@ -105,6 +117,13 @@ class HangingProcess:
 def _make_subprocess_stub(lines: list[dict]):
     async def _stub(*_args, **_kwargs):
         return FakeProcess(lines)
+
+    return _stub
+
+
+def _make_raw_subprocess_stub(lines: list[bytes]):
+    async def _stub(*_args, **_kwargs):
+        return FakeRawProcess(lines)
 
     return _stub
 
@@ -385,6 +404,47 @@ def test_codex_falls_back_to_response_output_text_delta(monkeypatch):
     assert response.text == "Hello world"
     assert response.usage.input_tokens == 4
     assert response.usage.output_tokens == 2
+
+
+def test_codex_parses_sse_data_prefixed_json_lines(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        b'data: {"type":"item.completed","item":{"type":"message","text":"Hello SSE"}}',
+        b'data: {"type":"turn.completed","usage":{"input_tokens":2,"output_tokens":1}}',
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_raw_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    response = asyncio.run(provider.complete(request))
+
+    assert response.text == "Hello SSE"
+    assert response.usage.input_tokens == 2
+    assert response.usage.output_tokens == 1
+
+
+def test_codex_ignores_sse_done_marker(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        b'data: {"type":"item.completed","item":{"type":"message","text":"Hello"}}',
+        b"data: [DONE]",
+        b'data: {"type":"turn.completed","usage":{"input_tokens":2,"output_tokens":1}}',
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_raw_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    response = asyncio.run(provider.complete(request))
+
+    assert response.text == "Hello"
+    assert response.usage.input_tokens == 2
+    assert response.usage.output_tokens == 1
 
 
 def test_codex_tool_calls_blocked_without_tools(monkeypatch):

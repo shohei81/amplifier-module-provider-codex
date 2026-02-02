@@ -1127,9 +1127,13 @@ class CodexProvider:
             line = await proc.stdout.readline()
             if not line:
                 break
-            line_str = line.decode("utf-8").strip()
+            line_str = line.decode("utf-8", errors="replace").strip()
             if not line_str:
                 continue
+            if line_str.startswith("data:"):
+                line_str = line_str[5:].strip()
+                if not line_str or line_str == "[DONE]":
+                    continue
 
             try:
                 event_data = json.loads(line_str)
