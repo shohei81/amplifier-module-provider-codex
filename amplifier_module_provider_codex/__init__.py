@@ -1001,7 +1001,17 @@ class CodexProvider:
     ) -> list[str]:
         """Build the Codex CLI command."""
 
-        def _append_common_flags(target: list[str]) -> None:
+        global_flags: list[str] = []
+        if self.ask_for_approval:
+            # `codex exec` does not accept --ask-for-approval directly.
+            # It must be passed as a top-level codex flag.
+            global_flags.extend(["--ask-for-approval", str(self.ask_for_approval)])
+        if self.search:
+            # `codex exec` does not accept --search directly.
+            # It must be passed as a top-level codex flag.
+            global_flags.append("--search")
+
+        def _append_exec_flags(target: list[str]) -> None:
             if reasoning_effort:
                 target.extend(
                     [
@@ -1015,10 +1025,6 @@ class CodexProvider:
                 target.extend(["--sandbox", str(self.sandbox)])
             if self.full_auto:
                 target.append("--full-auto")
-            if self.ask_for_approval:
-                target.extend(["--ask-for-approval", str(self.ask_for_approval)])
-            if self.search:
-                target.append("--search")
             for path in self.add_dir:
                 target.extend(["--add-dir", str(path)])
             if isinstance(self.network_access, bool):
@@ -1044,20 +1050,21 @@ class CodexProvider:
             if self.skip_git_repo_check:
                 target.append("--skip-git-repo-check")
 
+        cmd_prefix = [cli_path, *global_flags, "exec"]
+
         if session_id:
             cmd: list[str] = [
-                cli_path,
-                "exec",
+                *cmd_prefix,
                 "resume",
                 session_id,
                 "--json",
                 "--model",
                 model,
             ]
-            _append_common_flags(cmd)
+            _append_exec_flags(cmd)
         else:
-            cmd = [cli_path, "exec", "--json", "--model", model]
-            _append_common_flags(cmd)
+            cmd = [*cmd_prefix, "--json", "--model", model]
+            _append_exec_flags(cmd)
 
         cmd.append("-")
         return cmd

@@ -566,6 +566,9 @@ def test_codex_build_command_includes_permission_flags():
 
     assert cmd == [
         "/usr/bin/codex",
+        "--ask-for-approval",
+        "on-failure",
+        "--search",
         "exec",
         "--json",
         "--model",
@@ -575,9 +578,6 @@ def test_codex_build_command_includes_permission_flags():
         "--sandbox",
         "workspace-write",
         "--full-auto",
-        "--ask-for-approval",
-        "on-failure",
-        "--search",
         "--add-dir",
         "/tmp/extra",
         "--add-dir",
@@ -605,6 +605,9 @@ def test_codex_build_command_includes_flags_with_resume():
 
     assert cmd == [
         "/usr/bin/codex",
+        "--ask-for-approval",
+        "never",
+        "--search",
         "exec",
         "resume",
         "thread_1",
@@ -613,15 +616,31 @@ def test_codex_build_command_includes_flags_with_resume():
         "gpt-5.2-codex",
         "--sandbox",
         "workspace-write",
-        "--ask-for-approval",
-        "never",
-        "--search",
         "--add-dir",
         "/tmp/dir",
         "--config",
         "sandbox_workspace_write.network_access=false",
         "-",
     ]
+
+
+def test_codex_places_global_flags_before_exec():
+    provider = CodexProvider(
+        config={
+            "search": True,
+            "ask_for_approval": "never",
+        }
+    )
+
+    cmd = provider._build_command("/usr/bin/codex", "gpt-5.2-codex", None)
+    exec_idx = cmd.index("exec")
+    before_exec = cmd[:exec_idx]
+    after_exec = cmd[exec_idx + 1 :]
+
+    assert "--search" in before_exec
+    assert "--ask-for-approval" in before_exec
+    assert "--search" not in after_exec
+    assert "--ask-for-approval" not in after_exec
 
 
 def test_codex_warns_on_ask_for_approval_on_request_without_full_auto(caplog):
