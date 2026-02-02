@@ -64,6 +64,9 @@ config = {
 }
 ```
 
+When `search = true`, `reasoning_effort = "minimal"` is automatically adjusted to
+`"low"` due to an upstream incompatibility between minimal reasoning and web search.
+
 ## Permissions
 
 Codex CLI defaults are determined by your Codex CLI profile when `sandbox` is unset.
