@@ -968,6 +968,28 @@ def test_codex_reasoning_effort_unknown_model_passthrough_logs_warning(caplog):
     assert "Passing through reasoning_effort" in caplog.text
 
 
+def test_codex_adjusts_minimal_reasoning_when_search_enabled(caplog):
+    provider = CodexProvider(config={"search": True})
+
+    with caplog.at_level(logging.WARNING):
+        adjusted = provider._adjust_reasoning_effort_for_search(
+            model="gpt-5-codex", reasoning_effort="minimal"
+        )
+
+    assert adjusted == "low"
+    assert "search=true is incompatible with reasoning_effort=minimal" in caplog.text
+
+
+def test_codex_keeps_reasoning_effort_when_search_disabled():
+    provider = CodexProvider(config={"search": False})
+
+    adjusted = provider._adjust_reasoning_effort_for_search(
+        model="gpt-5-codex", reasoning_effort="minimal"
+    )
+
+    assert adjusted == "minimal"
+
+
 def test_codex_builds_resume_command_with_reasoning_effort():
     provider = CodexProvider()
 

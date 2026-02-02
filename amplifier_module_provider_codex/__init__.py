@@ -592,6 +592,9 @@ class CodexProvider:
         reasoning_effort = self._resolve_reasoning_effort(
             request, model=model, **kwargs
         )
+        reasoning_effort = self._adjust_reasoning_effort_for_search(
+            model=model, reasoning_effort=reasoning_effort
+        )
         existing_session_id = (
             request_metadata.get(METADATA_SESSION_ID) or self._get_codex_session_id()
         )
@@ -991,6 +994,20 @@ class CodexProvider:
             )
 
         return self._validate_reasoning_effort_for_model(model, self.reasoning_effort)
+
+    def _adjust_reasoning_effort_for_search(
+        self, model: str | None, reasoning_effort: str | None
+    ) -> str | None:
+        """Adjust reasoning effort for known tool compatibility constraints."""
+        if not self.search or reasoning_effort != "minimal":
+            return reasoning_effort
+
+        logger.warning(
+            "[PROVIDER] search=true is incompatible with reasoning_effort=minimal "
+            "for model=%s; using reasoning_effort=low instead.",
+            model,
+        )
+        return "low"
 
     def _build_command(
         self,
