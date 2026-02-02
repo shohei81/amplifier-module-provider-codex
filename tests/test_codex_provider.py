@@ -53,15 +53,24 @@ class FakeStream:
         return line
 
     async def read(self) -> bytes:
-        return b""
+        if self._idx >= len(self._lines):
+            return b""
+        remaining = b"".join(self._lines[self._idx :])
+        self._idx = len(self._lines)
+        return remaining
 
 
 class FakeProcess:
-    def __init__(self, lines: list[dict], returncode: int = 0):
+    def __init__(
+        self,
+        lines: list[dict],
+        returncode: int = 0,
+        stderr_lines: list[bytes] | None = None,
+    ):
         self.stdin = FakeStdin()
         encoded = [json.dumps(line).encode("utf-8") + b"\n" for line in lines]
         self.stdout = FakeStream(encoded)
-        self.stderr = FakeStream([])
+        self.stderr = FakeStream(stderr_lines or [])
         self.returncode = returncode
 
     async def wait(self) -> int:
@@ -117,6 +126,15 @@ class HangingProcess:
 def _make_subprocess_stub(lines: list[dict]):
     async def _stub(*_args, **_kwargs):
         return FakeProcess(lines)
+
+    return _stub
+
+
+def _make_subprocess_stub_with_stderr(
+    lines: list[dict], returncode: int, stderr_lines: list[bytes]
+):
+    async def _stub(*_args, **_kwargs):
+        return FakeProcess(lines, returncode=returncode, stderr_lines=stderr_lines)
 
     return _stub
 
@@ -445,6 +463,41 @@ def test_codex_ignores_sse_done_marker(monkeypatch):
     assert response.text == "Hello"
     assert response.usage.input_tokens == 2
     assert response.usage.output_tokens == 1
+
+
+def test_codex_raises_on_response_error_event(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {"type": "response.error", "error": "bad request"},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    with pytest.raises(RuntimeError, match="Codex CLI error: bad request"):
+        asyncio.run(provider.complete(request))
+
+
+def test_codex_surfaces_stderr_on_nonzero_exit(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        _make_subprocess_stub_with_stderr(
+            lines=[],
+            returncode=1,
+            stderr_lines=[b"fatal: permission denied\n"],
+        ),
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    with pytest.raises(RuntimeError, match="permission denied"):
+        asyncio.run(provider.complete(request))
 
 
 def test_codex_tool_calls_blocked_without_tools(monkeypatch):

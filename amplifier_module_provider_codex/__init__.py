@@ -15,6 +15,7 @@ __all__ = [
 __amplifier_module_type__ = "provider"
 
 import asyncio
+from contextlib import suppress
 import json
 import logging
 import re
@@ -1122,98 +1123,121 @@ class CodexProvider:
         streamed_text_deltas: list[str] = []
 
         assert proc.stdout is not None
+        assert proc.stderr is not None
+        stderr_task = asyncio.create_task(proc.stderr.read())
 
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            line_str = line.decode("utf-8", errors="replace").strip()
-            if not line_str:
-                continue
-            if line_str.startswith("data:"):
-                line_str = line_str[5:].strip()
-                if not line_str or line_str == "[DONE]":
+        try:
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                line_str = line.decode("utf-8", errors="replace").strip()
+                if not line_str:
+                    continue
+                if line_str.startswith("data:"):
+                    line_str = line_str[5:].strip()
+                    if not line_str or line_str == "[DONE]":
+                        continue
+
+                try:
+                    event_data = json.loads(line_str)
+                except json.JSONDecodeError:
+                    if self.debug:
+                        logger.warning(
+                            "[PROVIDER] Failed to parse JSONL: %s", line_str[:100]
+                        )
                     continue
 
-            try:
-                event_data = json.loads(line_str)
-            except json.JSONDecodeError:
-                if self.debug:
-                    logger.warning(
-                        "[PROVIDER] Failed to parse JSONL: %s", line_str[:100]
+                event_type = event_data.get("type")
+
+                if event_type == "thread.started":
+                    session_id = event_data.get("thread_id") or event_data.get(
+                        "session_id"
                     )
-                continue
+                    if session_id:
+                        metadata[METADATA_SESSION_ID] = session_id
 
-            event_type = event_data.get("type")
+                elif event_type == "turn.completed":
+                    raw_usage = event_data.get("usage", {}) or {}
+                    usage_data = {
+                        "input_tokens": raw_usage.get("input_tokens", 0),
+                        "output_tokens": raw_usage.get("output_tokens", 0),
+                        "cache_read_input_tokens": raw_usage.get(
+                            "cached_input_tokens",
+                            raw_usage.get("cache_read_input_tokens", 0),
+                        ),
+                        "cache_creation_input_tokens": raw_usage.get(
+                            "cache_creation_input_tokens", 0
+                        ),
+                    }
 
-            if event_type == "thread.started":
-                session_id = event_data.get("thread_id") or event_data.get("session_id")
-                if session_id:
-                    metadata[METADATA_SESSION_ID] = session_id
+                elif event_type == "response.completed":
+                    response_payload = event_data.get("response", {}) or {}
+                    raw_usage = response_payload.get("usage", {}) or {}
+                    usage_data = {
+                        "input_tokens": raw_usage.get("input_tokens", 0),
+                        "output_tokens": raw_usage.get("output_tokens", 0),
+                        "cache_read_input_tokens": raw_usage.get(
+                            "cached_input_tokens",
+                            raw_usage.get("cache_read_input_tokens", 0),
+                        ),
+                        "cache_creation_input_tokens": raw_usage.get(
+                            "cache_creation_input_tokens", 0
+                        ),
+                    }
 
-            elif event_type == "turn.completed":
-                raw_usage = event_data.get("usage", {}) or {}
-                usage_data = {
-                    "input_tokens": raw_usage.get("input_tokens", 0),
-                    "output_tokens": raw_usage.get("output_tokens", 0),
-                    "cache_read_input_tokens": raw_usage.get(
-                        "cached_input_tokens",
-                        raw_usage.get("cache_read_input_tokens", 0),
-                    ),
-                    "cache_creation_input_tokens": raw_usage.get(
-                        "cache_creation_input_tokens", 0
-                    ),
-                }
-
-            elif event_type == "response.completed":
-                response_payload = event_data.get("response", {}) or {}
-                raw_usage = response_payload.get("usage", {}) or {}
-                usage_data = {
-                    "input_tokens": raw_usage.get("input_tokens", 0),
-                    "output_tokens": raw_usage.get("output_tokens", 0),
-                    "cache_read_input_tokens": raw_usage.get(
-                        "cached_input_tokens",
-                        raw_usage.get("cache_read_input_tokens", 0),
-                    ),
-                    "cache_creation_input_tokens": raw_usage.get(
-                        "cache_creation_input_tokens", 0
-                    ),
-                }
-
-                # Fallback: parse final output items if item-level events were absent.
-                if not response_text and not tool_calls:
-                    output_items = response_payload.get("output", [])
-                    if isinstance(output_items, list):
-                        for output_item in output_items:
-                            if not isinstance(output_item, dict):
-                                continue
-                            item_text, item_tool_calls = self._parse_item(output_item)
-                            if item_text:
-                                last_assistant_text = item_text
-                                response_text = (
-                                    f"{response_text}\n{item_text}".strip()
-                                    if response_text
-                                    else item_text
+                    # Fallback: parse final output items if item-level events were absent.
+                    if not response_text and not tool_calls:
+                        output_items = response_payload.get("output", [])
+                        if isinstance(output_items, list):
+                            for output_item in output_items:
+                                if not isinstance(output_item, dict):
+                                    continue
+                                item_text, item_tool_calls = self._parse_item(
+                                    output_item
                                 )
-                            if item_tool_calls:
-                                tool_calls.extend(item_tool_calls)
+                                if item_text:
+                                    last_assistant_text = item_text
+                                    response_text = (
+                                        f"{response_text}\n{item_text}".strip()
+                                        if response_text
+                                        else item_text
+                                    )
+                                if item_tool_calls:
+                                    tool_calls.extend(item_tool_calls)
 
-            elif event_type == "turn.failed":
-                error_message = event_data.get("error") or event_data.get("message")
-                raise RuntimeError(f"Codex CLI failed turn: {error_message}")
+                elif event_type == "turn.failed":
+                    error_message = event_data.get("error") or event_data.get("message")
+                    raise RuntimeError(f"Codex CLI failed turn: {error_message}")
 
-            elif event_type == "error":
-                error_message = event_data.get("message") or event_data.get("error")
-                raise RuntimeError(f"Codex CLI error: {error_message}")
+                elif event_type in {"error", "response.error"}:
+                    error_message = event_data.get("message") or event_data.get("error")
+                    raise RuntimeError(f"Codex CLI error: {error_message}")
 
-            elif event_type == "response.output_text.delta":
-                delta = event_data.get("delta")
-                if isinstance(delta, str) and delta:
-                    streamed_text_deltas.append(delta)
+                elif event_type == "response.output_text.delta":
+                    delta = event_data.get("delta")
+                    if isinstance(delta, str) and delta:
+                        streamed_text_deltas.append(delta)
 
-            elif event_type in {"response.output_item.added", "response.output_item.done"}:
-                item = event_data.get("item")
-                if isinstance(item, dict):
+                elif event_type in {
+                    "response.output_item.added",
+                    "response.output_item.done",
+                }:
+                    item = event_data.get("item")
+                    if isinstance(item, dict):
+                        item_text, item_tool_calls = self._parse_item(item)
+                        if item_text:
+                            last_assistant_text = item_text
+                            response_text = (
+                                f"{response_text}\n{item_text}".strip()
+                                if response_text
+                                else item_text
+                            )
+                        if item_tool_calls:
+                            tool_calls.extend(item_tool_calls)
+
+                elif isinstance(event_type, str) and event_type.startswith("item."):
+                    item = event_data.get("item", event_data)
                     item_text, item_tool_calls = self._parse_item(item)
                     if item_text:
                         last_assistant_text = item_text
@@ -1224,24 +1248,21 @@ class CodexProvider:
                         )
                     if item_tool_calls:
                         tool_calls.extend(item_tool_calls)
-
-            elif isinstance(event_type, str) and event_type.startswith("item."):
-                item = event_data.get("item", event_data)
-                item_text, item_tool_calls = self._parse_item(item)
-                if item_text:
-                    last_assistant_text = item_text
-                    response_text = (
-                        f"{response_text}\n{item_text}".strip()
-                        if response_text
-                        else item_text
-                    )
-                if item_tool_calls:
-                    tool_calls.extend(item_tool_calls)
+        except Exception:
+            if not stderr_task.done():
+                stderr_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await stderr_task
+            raise
 
         await proc.wait()
 
+        stderr_data = b""
+        if not stderr_task.done():
+            stderr_data = await stderr_task
+        elif not stderr_task.cancelled():
+            stderr_data = stderr_task.result()
         if proc.returncode != 0:
-            stderr_data = await proc.stderr.read() if proc.stderr else b""
             error_msg = stderr_data.decode("utf-8").strip()
             if error_msg:
                 raise RuntimeError(
