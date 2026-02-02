@@ -88,6 +88,8 @@ settings, and only escalate to `workspace-write` or `full_auto` when required.
 ## Notes
 
 - Uses Codex CLI sessions for caching when available (`~/.amplifier-codex/sessions`).
+- Reuses Amplifier session IDs for persisted session files when available, improving
+  resume/caching stability across provider restarts.
 - Tool calls are emitted as `<tool_use>...</tool_use>` blocks and parsed from JSONL.
 - Codex CLI runs in read-only mode by default; set `sandbox` or `full_auto` only if intended.
 - `reasoning_effort` maps to Codex's `model_reasoning_effort` config override and is validated per model. Supported values vary by model family:
