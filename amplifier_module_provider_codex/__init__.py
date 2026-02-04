@@ -642,6 +642,12 @@ class CodexProvider:
 
         response_session_id = response_data.get("metadata", {}).get(METADATA_SESSION_ID)
         if response_session_id:
+            if existing_session_id and response_session_id != existing_session_id:
+                logger.warning(
+                    "[PROVIDER] Resume requested for session %s but Codex returned session %s; continuing with returned session.",
+                    existing_session_id,
+                    response_session_id,
+                )
             self._session_state.set_codex_session_id(response_session_id)
             if self.debug:
                 logger.debug(

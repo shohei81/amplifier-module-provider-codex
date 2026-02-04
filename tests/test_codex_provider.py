@@ -1387,3 +1387,30 @@ def test_codex_builds_resume_command_with_reasoning_effort():
 
     assert "resume" in cmd
     assert "--config" in cmd
+
+
+def test_codex_warns_when_resume_returns_different_session_id(monkeypatch, caplog):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {"type": "thread.started", "thread_id": "thread_new"},
+        {
+            "type": "item.completed",
+            "item": {"type": "message", "content": [{"type": "output_text", "text": "ok"}]},
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(
+        messages=[Message(role="user", content="Hi")],
+        metadata={"codex:session_id": "thread_old"},
+    )
+    with caplog.at_level(logging.WARNING):
+        response = asyncio.run(provider.complete(request))
+
+    assert response.metadata.get("codex:session_id") == "thread_new"
+    assert "Resume requested for session thread_old but Codex returned session thread_new" in caplog.text
