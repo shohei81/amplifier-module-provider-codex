@@ -174,6 +174,19 @@ def test_codex_basic_response(monkeypatch):
     assert response.usage.output_tokens == 5
 
 
+def test_codex_get_info_exposes_reasoning_level_config_field():
+    provider = CodexProvider(config={})
+
+    info = provider.get_info()
+    field = next((f for f in info.config_fields if f.id == "reasoning_effort"), None)
+
+    assert field is not None
+    assert field.field_type == "choice"
+    assert field.default == "medium"
+    assert field.required is False
+    assert field.choices == ["none", "minimal", "low", "medium", "high", "xhigh"]
+
+
 def test_codex_tool_call_from_item(monkeypatch):
     provider = CodexProvider(config={"skip_git_repo_check": True})
 
@@ -365,6 +378,70 @@ def test_codex_parses_response_output_item_done(monkeypatch):
     assert response.usage.output_tokens == 3
 
 
+def test_codex_dedupes_response_output_item_added_and_done(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "response.output_item.added",
+            "item": {
+                "type": "message",
+                "id": "msg_1",
+                "content": [{"type": "output_text", "text": "Hello once"}],
+            },
+        },
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "id": "msg_1",
+                "content": [{"type": "output_text", "text": "Hello once"}],
+            },
+        },
+        {
+            "type": "response.completed",
+            "response": {"usage": {"input_tokens": 3, "output_tokens": 2}},
+        },
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    response = asyncio.run(provider.complete(request))
+
+    assert response.text == "Hello once"
+
+
+def test_codex_parses_added_output_item_when_done_missing(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "response.output_item.added",
+            "item": {
+                "type": "message",
+                "id": "msg_2",
+                "content": [{"type": "output_text", "text": "Hello from added"}],
+            },
+        },
+        {
+            "type": "response.completed",
+            "response": {"usage": {"input_tokens": 2, "output_tokens": 1}},
+        },
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    response = asyncio.run(provider.complete(request))
+
+    assert response.text == "Hello from added"
+
+
 def test_codex_parses_function_call_from_response_output_item_done(monkeypatch):
     provider = CodexProvider(config={"skip_git_repo_check": True})
 
@@ -442,6 +519,52 @@ def test_codex_parses_sse_data_prefixed_json_lines(monkeypatch):
     assert response.text == "Hello SSE"
     assert response.usage.input_tokens == 2
     assert response.usage.output_tokens == 1
+
+
+def test_codex_dedupes_item_started_and_item_completed(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "item.started",
+            "item": {"id": "item_1", "type": "agent_message", "text": "Hello once"},
+        },
+        {
+            "type": "item.completed",
+            "item": {"id": "item_1", "type": "agent_message", "text": "Hello once"},
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 2, "output_tokens": 1}},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    response = asyncio.run(provider.complete(request))
+
+    assert response.text == "Hello once"
+
+
+def test_codex_parses_pending_item_started_when_completed_missing(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "item.started",
+            "item": {"id": "item_2", "type": "agent_message", "text": "Hello fallback"},
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 2, "output_tokens": 1}},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    response = asyncio.run(provider.complete(request))
+
+    assert response.text == "Hello fallback"
 
 
 def test_codex_ignores_sse_done_marker(monkeypatch):
@@ -897,7 +1020,6 @@ def test_codex_build_command_includes_permission_flags():
         "dev",
         "--sandbox",
         "workspace-write",
-        "--full-auto",
         "--ask-for-approval",
         "on-failure",
         "--search",
@@ -994,13 +1116,11 @@ def test_codex_places_global_flags_before_exec():
     assert "--ask-for-approval" in before_exec
     assert "--profile" in before_exec
     assert "--sandbox" in before_exec
-    assert "--full-auto" in before_exec
     assert "--add-dir" in before_exec
     assert "--search" not in after_exec
     assert "--ask-for-approval" not in after_exec
     assert "--profile" not in after_exec
     assert "--sandbox" not in after_exec
-    assert "--full-auto" not in after_exec
     assert "--add-dir" not in after_exec
 
 
@@ -1016,6 +1136,27 @@ def test_codex_warns_on_danger_full_access_sandbox(caplog):
         CodexProvider(config={"sandbox": "danger-full-access"})
 
     assert "sandbox=danger-full-access is unsafe" in caplog.text
+
+
+def test_codex_warns_when_full_auto_ignored_due_to_explicit_permissions(caplog):
+    with caplog.at_level(logging.WARNING):
+        CodexProvider(
+            config={
+                "full_auto": True,
+                "sandbox": "workspace-write",
+                "ask_for_approval": "never",
+            }
+        )
+
+    assert "full_auto ignored because explicit sandbox/ask_for_approval is configured" in caplog.text
+
+
+def test_codex_build_command_keeps_full_auto_when_no_explicit_permissions():
+    provider = CodexProvider(config={"full_auto": True})
+
+    cmd = provider._build_command("/usr/bin/codex", "gpt-5.2-codex", None)
+
+    assert "--full-auto" in cmd
 
 
 def test_codex_warns_on_invalid_ask_for_approval_value(caplog):
@@ -1259,3 +1400,30 @@ def test_codex_builds_resume_command_with_reasoning_effort():
 
     assert "resume" in cmd
     assert "--config" in cmd
+
+
+def test_codex_warns_when_resume_returns_different_session_id(monkeypatch, caplog):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {"type": "thread.started", "thread_id": "thread_new"},
+        {
+            "type": "item.completed",
+            "item": {"type": "message", "content": [{"type": "output_text", "text": "ok"}]},
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(
+        messages=[Message(role="user", content="Hi")],
+        metadata={"codex:session_id": "thread_old"},
+    )
+    with caplog.at_level(logging.WARNING):
+        response = asyncio.run(provider.complete(request))
+
+    assert response.metadata.get("codex:session_id") == "thread_new"
+    assert "Resume requested for session thread_old but Codex returned session thread_new" in caplog.text

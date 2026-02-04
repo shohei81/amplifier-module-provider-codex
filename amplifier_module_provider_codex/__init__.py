@@ -28,6 +28,7 @@ from typing import Callable
 from amplifier_core import ModelInfo
 from amplifier_core import ModuleCoordinator
 from amplifier_core import ProviderInfo
+from amplifier_core import ConfigField
 from amplifier_core import TextContent
 from amplifier_core import ThinkingContent
 from amplifier_core import ToolCallContent
@@ -246,6 +247,10 @@ class CodexProvider:
             logger.warning(
                 "[PROVIDER] sandbox=danger-full-access is unsafe outside isolated environments."
             )
+        if self.full_auto and (self.sandbox is not None or self.ask_for_approval):
+            logger.warning(
+                "[PROVIDER] full_auto ignored because explicit sandbox/ask_for_approval is configured."
+            )
 
         # Track repaired tool call IDs to prevent infinite detection loops
         self._repaired_tool_ids: set[str] = set()
@@ -312,7 +317,17 @@ class CodexProvider:
                 "max_tokens": self.max_tokens,
                 "timeout": self.timeout,
             },
-            config_fields=[],
+            config_fields=[
+                ConfigField(
+                    id="reasoning_effort",
+                    display_name="Reasoning Level",
+                    field_type="choice",
+                    prompt="Select reasoning level for Codex model",
+                    choices=["none", "minimal", "low", "medium", "high", "xhigh"],
+                    required=False,
+                    default="medium",
+                )
+            ],
         )
 
     async def list_models(self) -> list[ModelInfo]:
@@ -638,6 +653,12 @@ class CodexProvider:
 
         response_session_id = response_data.get("metadata", {}).get(METADATA_SESSION_ID)
         if response_session_id:
+            if existing_session_id and response_session_id != existing_session_id:
+                logger.warning(
+                    "[PROVIDER] Resume requested for session %s but Codex returned session %s; continuing with returned session.",
+                    existing_session_id,
+                    response_session_id,
+                )
             self._session_state.set_codex_session_id(response_session_id)
             if self.debug:
                 logger.debug(
@@ -1024,7 +1045,10 @@ class CodexProvider:
             global_flags.extend(["--profile", str(self.profile)])
         if self.sandbox:
             global_flags.extend(["--sandbox", str(self.sandbox)])
-        if self.full_auto:
+        use_full_auto = (
+            self.full_auto and self.sandbox is None and self.ask_for_approval is None
+        )
+        if use_full_auto:
             global_flags.append("--full-auto")
         if self.ask_for_approval:
             global_flags.extend(["--ask-for-approval", str(self.ask_for_approval)])
@@ -1119,6 +1143,10 @@ class CodexProvider:
         usage_data: dict[str, Any] = {}
         metadata: dict[str, Any] = {}
         tool_calls: list[dict[str, Any]] = []
+        pending_output_items: dict[str, dict[str, Any]] = {}
+        parsed_output_item_ids: set[str] = set()
+        pending_exec_items: dict[str, dict[str, Any]] = {}
+        parsed_exec_item_ids: set[str] = set()
         last_assistant_text = ""
         streamed_text_deltas: list[str] = []
 
@@ -1225,6 +1253,16 @@ class CodexProvider:
                 }:
                     item = event_data.get("item")
                     if isinstance(item, dict):
+                        item_id = item.get("id") or event_data.get("item_id")
+                        if isinstance(item_id, str) and item_id:
+                            if event_type == "response.output_item.added":
+                                pending_output_items[item_id] = item
+                                continue
+                            pending_output_items.pop(item_id, None)
+                            if item_id in parsed_output_item_ids:
+                                continue
+                            parsed_output_item_ids.add(item_id)
+
                         item_text, item_tool_calls = self._parse_item(item)
                         if item_text:
                             last_assistant_text = item_text
@@ -1236,18 +1274,31 @@ class CodexProvider:
                         if item_tool_calls:
                             tool_calls.extend(item_tool_calls)
 
-                elif isinstance(event_type, str) and event_type.startswith("item."):
+                elif event_type in {"item.started", "item.updated", "item.completed"}:
                     item = event_data.get("item", event_data)
-                    item_text, item_tool_calls = self._parse_item(item)
-                    if item_text:
-                        last_assistant_text = item_text
-                        response_text = (
-                            f"{response_text}\n{item_text}".strip()
-                            if response_text
-                            else item_text
-                        )
-                    if item_tool_calls:
-                        tool_calls.extend(item_tool_calls)
+                    if isinstance(item, dict):
+                        item_id = item.get("id")
+                        if isinstance(item_id, str) and item_id:
+                            if event_type != "item.completed":
+                                pending_exec_items[item_id] = item
+                                continue
+                            pending_exec_items.pop(item_id, None)
+                            if item_id in parsed_exec_item_ids:
+                                continue
+                            parsed_exec_item_ids.add(item_id)
+                        elif event_type != "item.completed":
+                            continue
+
+                        item_text, item_tool_calls = self._parse_item(item)
+                        if item_text:
+                            last_assistant_text = item_text
+                            response_text = (
+                                f"{response_text}\n{item_text}".strip()
+                                if response_text
+                                else item_text
+                            )
+                        if item_tool_calls:
+                            tool_calls.extend(item_tool_calls)
         except Exception:
             if not stderr_task.done():
                 stderr_task.cancel()
@@ -1256,6 +1307,38 @@ class CodexProvider:
             raise
 
         await proc.wait()
+
+        # Some runs may emit response.output_item.added without a matching done event.
+        # Parse remaining pending items once to avoid dropping assistant output.
+        for item_id, item in pending_output_items.items():
+            if item_id in parsed_output_item_ids:
+                continue
+            item_text, item_tool_calls = self._parse_item(item)
+            if item_text:
+                last_assistant_text = item_text
+                response_text = (
+                    f"{response_text}\n{item_text}".strip()
+                    if response_text
+                    else item_text
+                )
+            if item_tool_calls:
+                tool_calls.extend(item_tool_calls)
+
+        # item.* lifecycle events can include started/updated/completed states.
+        # If completed is missing, parse the latest pending item once as a fallback.
+        for item_id, item in pending_exec_items.items():
+            if item_id in parsed_exec_item_ids:
+                continue
+            item_text, item_tool_calls = self._parse_item(item)
+            if item_text:
+                last_assistant_text = item_text
+                response_text = (
+                    f"{response_text}\n{item_text}".strip()
+                    if response_text
+                    else item_text
+                )
+            if item_tool_calls:
+                tool_calls.extend(item_tool_calls)
 
         stderr_data = b""
         if not stderr_task.done():
