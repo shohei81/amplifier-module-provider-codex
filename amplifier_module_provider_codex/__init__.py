@@ -205,7 +205,9 @@ class CodexProvider:
         self.coordinator = coordinator
 
         # Configuration
-        self.default_model = self.config.get("default_model", DEFAULT_MODEL)
+        self.default_model = self.config.get(
+            "default_model", self.config.get("model", DEFAULT_MODEL)
+        )
         self.timeout = self.config.get("timeout", DEFAULT_TIMEOUT)
         self.debug = self.config.get("debug", False)
         self.max_tokens = self.config.get("max_tokens", DEFAULT_MAX_TOKENS)
@@ -319,6 +321,15 @@ class CodexProvider:
             },
             config_fields=[
                 ConfigField(
+                    id="default_model",
+                    display_name="Model",
+                    field_type="choice",
+                    prompt="Select model for Codex provider",
+                    choices=list(MODELS.keys()),
+                    required=False,
+                    default=self.default_model,
+                ),
+                ConfigField(
                     id="reasoning_effort",
                     display_name="Reasoning Level",
                     field_type="choice",
@@ -326,6 +337,7 @@ class CodexProvider:
                     choices=["none", "minimal", "low", "medium", "high", "xhigh"],
                     required=False,
                     default="medium",
+                    requires_model=True,
                 )
             ],
         )
@@ -1155,17 +1167,15 @@ class CodexProvider:
         stderr_task = asyncio.create_task(proc.stderr.read())
 
         try:
-            while True:
-                line = await proc.stdout.readline()
-                if not line:
-                    break
-                line_str = line.decode("utf-8", errors="replace").strip()
+            def _process_event_line(line_str: str) -> None:
+                nonlocal response_text, usage_data, last_assistant_text
+
                 if not line_str:
-                    continue
+                    return
                 if line_str.startswith("data:"):
                     line_str = line_str[5:].strip()
                     if not line_str or line_str == "[DONE]":
-                        continue
+                        return
 
                 try:
                     event_data = json.loads(line_str)
@@ -1174,7 +1184,7 @@ class CodexProvider:
                         logger.warning(
                             "[PROVIDER] Failed to parse JSONL: %s", line_str[:100]
                         )
-                    continue
+                    return
 
                 event_type = event_data.get("type")
 
@@ -1257,10 +1267,10 @@ class CodexProvider:
                         if isinstance(item_id, str) and item_id:
                             if event_type == "response.output_item.added":
                                 pending_output_items[item_id] = item
-                                continue
+                                return
                             pending_output_items.pop(item_id, None)
                             if item_id in parsed_output_item_ids:
-                                continue
+                                return
                             parsed_output_item_ids.add(item_id)
 
                         item_text, item_tool_calls = self._parse_item(item)
@@ -1281,13 +1291,13 @@ class CodexProvider:
                         if isinstance(item_id, str) and item_id:
                             if event_type != "item.completed":
                                 pending_exec_items[item_id] = item
-                                continue
+                                return
                             pending_exec_items.pop(item_id, None)
                             if item_id in parsed_exec_item_ids:
-                                continue
+                                return
                             parsed_exec_item_ids.add(item_id)
                         elif event_type != "item.completed":
-                            continue
+                            return
 
                         item_text, item_tool_calls = self._parse_item(item)
                         if item_text:
@@ -1299,6 +1309,25 @@ class CodexProvider:
                             )
                         if item_tool_calls:
                             tool_calls.extend(item_tool_calls)
+
+            stdout_buffer = b""
+            while True:
+                chunk = await proc.stdout.read(65536)
+                if chunk:
+                    stdout_buffer += chunk
+                    raw_lines = stdout_buffer.split(b"\n")
+                    stdout_buffer = raw_lines.pop()
+                    for raw_line in raw_lines:
+                        _process_event_line(
+                            raw_line.decode("utf-8", errors="replace").strip()
+                        )
+                    continue
+
+                if stdout_buffer:
+                    _process_event_line(
+                        stdout_buffer.decode("utf-8", errors="replace").strip()
+                    )
+                break
         except Exception:
             if not stderr_task.done():
                 stderr_task.cancel()
