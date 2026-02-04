@@ -8,6 +8,7 @@ from amplifier_core.message_models import Message
 from amplifier_core.message_models import ToolCallBlock
 
 from amplifier_module_provider_codex import CodexProvider
+from amplifier_module_provider_codex import MODELS
 
 
 class FakeHooks:
@@ -52,12 +53,19 @@ class FakeStream:
         self._idx += 1
         return line
 
-    async def read(self) -> bytes:
+    async def read(self, n: int = -1) -> bytes:
         if self._idx >= len(self._lines):
             return b""
         remaining = b"".join(self._lines[self._idx :])
-        self._idx = len(self._lines)
-        return remaining
+        if n is None or n < 0 or len(remaining) <= n:
+            self._idx = len(self._lines)
+            return remaining
+
+        head = remaining[:n]
+        tail = remaining[n:]
+        self._lines = [tail]
+        self._idx = 0
+        return head
 
 
 class FakeProcess:
@@ -94,7 +102,7 @@ class HangingStream:
         await asyncio.sleep(10)
         return b""
 
-    async def read(self) -> bytes:
+    async def read(self, n: int = -1) -> bytes:
         await asyncio.sleep(10)
         return b""
 
@@ -174,10 +182,83 @@ def test_codex_basic_response(monkeypatch):
     assert response.usage.output_tokens == 5
 
 
-def test_codex_get_info_exposes_reasoning_level_config_field():
+def test_codex_parses_large_jsonl_without_readline_limit_errors(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    class ReadOnlyChunkedStream:
+        def __init__(self, payload: bytes, chunk_size: int = 2048):
+            self.payload = payload
+            self.chunk_size = chunk_size
+            self.idx = 0
+
+        async def readline(self) -> bytes:
+            raise AssertionError("readline should not be used")
+
+        async def read(self, n: int = -1) -> bytes:
+            if self.idx >= len(self.payload):
+                return b""
+            size = self.chunk_size if n is None or n < 0 else min(self.chunk_size, n)
+            chunk = self.payload[self.idx : self.idx + size]
+            self.idx += len(chunk)
+            return chunk
+
+    class ReadOnlyProcess:
+        def __init__(self, lines: list[dict]):
+            self.stdin = FakeStdin()
+            payload = b"".join(
+                json.dumps(line).encode("utf-8") + b"\n" for line in lines
+            )
+            self.stdout = ReadOnlyChunkedStream(payload)
+            self.stderr = FakeStream([])
+            self.returncode = 0
+
+        async def wait(self) -> int:
+            return 0
+
+    async def _stub(*_args, **_kwargs):
+        long_text = "x" * 120_000
+        return ReadOnlyProcess(
+            [
+                {"type": "thread.started", "thread_id": "thread_123"},
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": long_text}],
+                    },
+                },
+                {"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 5}},
+            ]
+        )
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _stub)
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    response = asyncio.run(provider.complete(request))
+
+    assert response.text == "x" * 120_000
+    assert response.metadata.get("codex:session_id") == "thread_123"
+
+
+def test_codex_get_info_exposes_model_then_reasoning_config_fields():
     provider = CodexProvider(config={})
 
     info = provider.get_info()
+    assert [field.id for field in info.config_fields[:2]] == [
+        "default_model",
+        "reasoning_effort",
+    ]
+
+    model_field = next(
+        (f for f in info.config_fields if f.id == "default_model"), None
+    )
+    assert model_field is not None
+    assert model_field.field_type == "choice"
+    assert model_field.default == "gpt-5.2-codex"
+    assert model_field.required is False
+    assert model_field.choices == list(MODELS.keys())
+
     field = next((f for f in info.config_fields if f.id == "reasoning_effort"), None)
 
     assert field is not None
@@ -185,6 +266,7 @@ def test_codex_get_info_exposes_reasoning_level_config_field():
     assert field.default == "medium"
     assert field.required is False
     assert field.choices == ["none", "minimal", "low", "medium", "high", "xhigh"]
+    assert field.requires_model is True
 
 
 def test_codex_tool_call_from_item(monkeypatch):
