@@ -246,6 +246,10 @@ class CodexProvider:
             logger.warning(
                 "[PROVIDER] sandbox=danger-full-access is unsafe outside isolated environments."
             )
+        if self.full_auto and (self.sandbox is not None or self.ask_for_approval):
+            logger.warning(
+                "[PROVIDER] full_auto ignored because explicit sandbox/ask_for_approval is configured."
+            )
 
         # Track repaired tool call IDs to prevent infinite detection loops
         self._repaired_tool_ids: set[str] = set()
@@ -1024,7 +1028,10 @@ class CodexProvider:
             global_flags.extend(["--profile", str(self.profile)])
         if self.sandbox:
             global_flags.extend(["--sandbox", str(self.sandbox)])
-        if self.full_auto:
+        use_full_auto = (
+            self.full_auto and self.sandbox is None and self.ask_for_approval is None
+        )
+        if use_full_auto:
             global_flags.append("--full-auto")
         if self.ask_for_approval:
             global_flags.extend(["--ask-for-approval", str(self.ask_for_approval)])

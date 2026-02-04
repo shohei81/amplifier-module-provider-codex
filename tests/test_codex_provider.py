@@ -1007,7 +1007,6 @@ def test_codex_build_command_includes_permission_flags():
         "dev",
         "--sandbox",
         "workspace-write",
-        "--full-auto",
         "--ask-for-approval",
         "on-failure",
         "--search",
@@ -1104,13 +1103,11 @@ def test_codex_places_global_flags_before_exec():
     assert "--ask-for-approval" in before_exec
     assert "--profile" in before_exec
     assert "--sandbox" in before_exec
-    assert "--full-auto" in before_exec
     assert "--add-dir" in before_exec
     assert "--search" not in after_exec
     assert "--ask-for-approval" not in after_exec
     assert "--profile" not in after_exec
     assert "--sandbox" not in after_exec
-    assert "--full-auto" not in after_exec
     assert "--add-dir" not in after_exec
 
 
@@ -1126,6 +1123,27 @@ def test_codex_warns_on_danger_full_access_sandbox(caplog):
         CodexProvider(config={"sandbox": "danger-full-access"})
 
     assert "sandbox=danger-full-access is unsafe" in caplog.text
+
+
+def test_codex_warns_when_full_auto_ignored_due_to_explicit_permissions(caplog):
+    with caplog.at_level(logging.WARNING):
+        CodexProvider(
+            config={
+                "full_auto": True,
+                "sandbox": "workspace-write",
+                "ask_for_approval": "never",
+            }
+        )
+
+    assert "full_auto ignored because explicit sandbox/ask_for_approval is configured" in caplog.text
+
+
+def test_codex_build_command_keeps_full_auto_when_no_explicit_permissions():
+    provider = CodexProvider(config={"full_auto": True})
+
+    cmd = provider._build_command("/usr/bin/codex", "gpt-5.2-codex", None)
+
+    assert "--full-auto" in cmd
 
 
 def test_codex_warns_on_invalid_ask_for_approval_value(caplog):
