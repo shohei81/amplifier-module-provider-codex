@@ -508,6 +508,52 @@ def test_codex_parses_sse_data_prefixed_json_lines(monkeypatch):
     assert response.usage.output_tokens == 1
 
 
+def test_codex_dedupes_item_started_and_item_completed(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "item.started",
+            "item": {"id": "item_1", "type": "agent_message", "text": "Hello once"},
+        },
+        {
+            "type": "item.completed",
+            "item": {"id": "item_1", "type": "agent_message", "text": "Hello once"},
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 2, "output_tokens": 1}},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    response = asyncio.run(provider.complete(request))
+
+    assert response.text == "Hello once"
+
+
+def test_codex_parses_pending_item_started_when_completed_missing(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "item.started",
+            "item": {"id": "item_2", "type": "agent_message", "text": "Hello fallback"},
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 2, "output_tokens": 1}},
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    response = asyncio.run(provider.complete(request))
+
+    assert response.text == "Hello fallback"
+
+
 def test_codex_ignores_sse_done_marker(monkeypatch):
     provider = CodexProvider(config={"skip_git_repo_check": True})
 

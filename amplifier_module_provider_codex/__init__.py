@@ -1121,6 +1121,8 @@ class CodexProvider:
         tool_calls: list[dict[str, Any]] = []
         pending_output_items: dict[str, dict[str, Any]] = {}
         parsed_output_item_ids: set[str] = set()
+        pending_exec_items: dict[str, dict[str, Any]] = {}
+        parsed_exec_item_ids: set[str] = set()
         last_assistant_text = ""
         streamed_text_deltas: list[str] = []
 
@@ -1248,18 +1250,31 @@ class CodexProvider:
                         if item_tool_calls:
                             tool_calls.extend(item_tool_calls)
 
-                elif isinstance(event_type, str) and event_type.startswith("item."):
+                elif event_type in {"item.started", "item.updated", "item.completed"}:
                     item = event_data.get("item", event_data)
-                    item_text, item_tool_calls = self._parse_item(item)
-                    if item_text:
-                        last_assistant_text = item_text
-                        response_text = (
-                            f"{response_text}\n{item_text}".strip()
-                            if response_text
-                            else item_text
-                        )
-                    if item_tool_calls:
-                        tool_calls.extend(item_tool_calls)
+                    if isinstance(item, dict):
+                        item_id = item.get("id")
+                        if isinstance(item_id, str) and item_id:
+                            if event_type != "item.completed":
+                                pending_exec_items[item_id] = item
+                                continue
+                            pending_exec_items.pop(item_id, None)
+                            if item_id in parsed_exec_item_ids:
+                                continue
+                            parsed_exec_item_ids.add(item_id)
+                        elif event_type != "item.completed":
+                            continue
+
+                        item_text, item_tool_calls = self._parse_item(item)
+                        if item_text:
+                            last_assistant_text = item_text
+                            response_text = (
+                                f"{response_text}\n{item_text}".strip()
+                                if response_text
+                                else item_text
+                            )
+                        if item_tool_calls:
+                            tool_calls.extend(item_tool_calls)
         except Exception:
             if not stderr_task.done():
                 stderr_task.cancel()
@@ -1273,6 +1288,22 @@ class CodexProvider:
         # Parse remaining pending items once to avoid dropping assistant output.
         for item_id, item in pending_output_items.items():
             if item_id in parsed_output_item_ids:
+                continue
+            item_text, item_tool_calls = self._parse_item(item)
+            if item_text:
+                last_assistant_text = item_text
+                response_text = (
+                    f"{response_text}\n{item_text}".strip()
+                    if response_text
+                    else item_text
+                )
+            if item_tool_calls:
+                tool_calls.extend(item_tool_calls)
+
+        # item.* lifecycle events can include started/updated/completed states.
+        # If completed is missing, parse the latest pending item once as a fallback.
+        for item_id, item in pending_exec_items.items():
+            if item_id in parsed_exec_item_ids:
                 continue
             item_text, item_tool_calls = self._parse_item(item)
             if item_text:
