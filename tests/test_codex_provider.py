@@ -365,6 +365,70 @@ def test_codex_parses_response_output_item_done(monkeypatch):
     assert response.usage.output_tokens == 3
 
 
+def test_codex_dedupes_response_output_item_added_and_done(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "response.output_item.added",
+            "item": {
+                "type": "message",
+                "id": "msg_1",
+                "content": [{"type": "output_text", "text": "Hello once"}],
+            },
+        },
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "id": "msg_1",
+                "content": [{"type": "output_text", "text": "Hello once"}],
+            },
+        },
+        {
+            "type": "response.completed",
+            "response": {"usage": {"input_tokens": 3, "output_tokens": 2}},
+        },
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    response = asyncio.run(provider.complete(request))
+
+    assert response.text == "Hello once"
+
+
+def test_codex_parses_added_output_item_when_done_missing(monkeypatch):
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/codex")
+    lines = [
+        {
+            "type": "response.output_item.added",
+            "item": {
+                "type": "message",
+                "id": "msg_2",
+                "content": [{"type": "output_text", "text": "Hello from added"}],
+            },
+        },
+        {
+            "type": "response.completed",
+            "response": {"usage": {"input_tokens": 2, "output_tokens": 1}},
+        },
+    ]
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_subprocess_stub(lines)
+    )
+
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+    response = asyncio.run(provider.complete(request))
+
+    assert response.text == "Hello from added"
+
+
 def test_codex_parses_function_call_from_response_output_item_done(monkeypatch):
     provider = CodexProvider(config={"skip_git_repo_check": True})
 

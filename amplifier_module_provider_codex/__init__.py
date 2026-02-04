@@ -1119,6 +1119,8 @@ class CodexProvider:
         usage_data: dict[str, Any] = {}
         metadata: dict[str, Any] = {}
         tool_calls: list[dict[str, Any]] = []
+        pending_output_items: dict[str, dict[str, Any]] = {}
+        parsed_output_item_ids: set[str] = set()
         last_assistant_text = ""
         streamed_text_deltas: list[str] = []
 
@@ -1225,6 +1227,16 @@ class CodexProvider:
                 }:
                     item = event_data.get("item")
                     if isinstance(item, dict):
+                        item_id = item.get("id") or event_data.get("item_id")
+                        if isinstance(item_id, str) and item_id:
+                            if event_type == "response.output_item.added":
+                                pending_output_items[item_id] = item
+                                continue
+                            pending_output_items.pop(item_id, None)
+                            if item_id in parsed_output_item_ids:
+                                continue
+                            parsed_output_item_ids.add(item_id)
+
                         item_text, item_tool_calls = self._parse_item(item)
                         if item_text:
                             last_assistant_text = item_text
@@ -1256,6 +1268,22 @@ class CodexProvider:
             raise
 
         await proc.wait()
+
+        # Some runs may emit response.output_item.added without a matching done event.
+        # Parse remaining pending items once to avoid dropping assistant output.
+        for item_id, item in pending_output_items.items():
+            if item_id in parsed_output_item_ids:
+                continue
+            item_text, item_tool_calls = self._parse_item(item)
+            if item_text:
+                last_assistant_text = item_text
+                response_text = (
+                    f"{response_text}\n{item_text}".strip()
+                    if response_text
+                    else item_text
+                )
+            if item_tool_calls:
+                tool_calls.extend(item_tool_calls)
 
         stderr_data = b""
         if not stderr_task.done():
