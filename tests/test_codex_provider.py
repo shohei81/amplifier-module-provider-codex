@@ -174,6 +174,19 @@ def test_codex_basic_response(monkeypatch):
     assert response.usage.output_tokens == 5
 
 
+def test_codex_get_info_exposes_reasoning_level_config_field():
+    provider = CodexProvider(config={})
+
+    info = provider.get_info()
+    field = next((f for f in info.config_fields if f.id == "reasoning_effort"), None)
+
+    assert field is not None
+    assert field.field_type == "choice"
+    assert field.default == "medium"
+    assert field.required is False
+    assert field.choices == ["none", "minimal", "low", "medium", "high", "xhigh"]
+
+
 def test_codex_tool_call_from_item(monkeypatch):
     provider = CodexProvider(config={"skip_git_repo_check": True})
 

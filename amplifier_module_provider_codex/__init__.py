@@ -28,6 +28,7 @@ from typing import Callable
 from amplifier_core import ModelInfo
 from amplifier_core import ModuleCoordinator
 from amplifier_core import ProviderInfo
+from amplifier_core import ConfigField
 from amplifier_core import TextContent
 from amplifier_core import ThinkingContent
 from amplifier_core import ToolCallContent
@@ -316,7 +317,17 @@ class CodexProvider:
                 "max_tokens": self.max_tokens,
                 "timeout": self.timeout,
             },
-            config_fields=[],
+            config_fields=[
+                ConfigField(
+                    id="reasoning_effort",
+                    display_name="Reasoning Level",
+                    field_type="choice",
+                    prompt="Select reasoning level for Codex model",
+                    choices=["none", "minimal", "low", "medium", "high", "xhigh"],
+                    required=False,
+                    default="medium",
+                )
+            ],
         )
 
     async def list_models(self) -> list[ModelInfo]:
