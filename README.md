@@ -33,15 +33,7 @@ codex login
 ## Supported Models
 
 - `gpt-5.2-codex` (default)
-- `gpt-5.1-codex`
-- `gpt-5.1-codex-mini`
-- `gpt-5.1-codex-max`
-- `gpt-5-codex`
-- `gpt-5-codex-mini`
 - `gpt-5.2`
-- `gpt-5.1`
-- `gpt-5`
-- `codex-mini-latest`
 
 ## Configuration
 
@@ -60,12 +52,9 @@ config = {
     ask_for_approval = null, # Optional: Codex CLI approval policy
     network_access = null,   # Optional: override network access (bool)
     add_dir = [],       # Optional: additional writable directories
-    reasoning_effort = "medium" # Optional: none | minimal | low | medium | high | xhigh (varies by model)
+    reasoning_effort = "medium" # Optional: none | low | medium | high | xhigh
 }
 ```
-
-When `search = true`, `reasoning_effort = "minimal"` is automatically adjusted to
-`"low"` due to an upstream incompatibility between minimal reasoning and web search.
 
 ## Permissions
 
@@ -92,7 +81,5 @@ settings, and only escalate to `workspace-write` or `full_auto` when required.
   resume/caching stability across provider restarts.
 - Tool calls are emitted as `<tool_use>...</tool_use>` blocks and parsed from JSONL.
 - Codex CLI runs in read-only mode by default; set `sandbox` or `full_auto` only if intended.
-- `reasoning_effort` maps to Codex's `model_reasoning_effort` config override and is validated per model. Supported values vary by model family:
-  - **GPT-5.2 models** (e.g. `gpt-5.2-codex`): `none`, `low`, `medium`, `high`, `xhigh`
-  - **GPT-5.1 models** (e.g. `gpt-5.1-codex`, `gpt-5.1-codex-mini`, `gpt-5.1-codex-max`): `none`, `low`, `medium`, `high`
-  - **GPT-5 models** (e.g. `gpt-5-codex`, `gpt-5-codex-mini`): `minimal`, `low`, `medium`, `high`
+- This provider supports GPT-5.2 models only. Unsupported model settings are rejected (or defaulted to `gpt-5.2-codex` for `default_model`).
+- `reasoning_effort` maps to Codex's `model_reasoning_effort` and supports: `none`, `low`, `medium`, `high`, `xhigh`.

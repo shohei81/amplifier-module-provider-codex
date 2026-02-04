@@ -65,7 +65,7 @@ DEFAULT_MODEL = "gpt-5.2-codex"
 DEFAULT_TIMEOUT = 300.0
 DEFAULT_MAX_TOKENS = 64000
 
-# Model specifications (Codex CLI + GPT-5 family)
+# Model specifications (GPT-5.2 family only)
 MODELS = {
     "gpt-5.2-codex": {
         "id": "gpt-5.2-codex",
@@ -74,68 +74,12 @@ MODELS = {
         "max_output_tokens": 128000,
         "capabilities": ["tools", "streaming"],
     },
-    "gpt-5.1-codex-mini": {
-        "id": "gpt-5.1-codex-mini",
-        "display_name": "GPT-5.1-Codex Mini",
-        "context_window": 400000,
-        "max_output_tokens": 128000,
-        "capabilities": ["tools", "streaming", "fast"],
-    },
-    "gpt-5.1-codex-max": {
-        "id": "gpt-5.1-codex-max",
-        "display_name": "GPT-5.1-Codex Max",
-        "context_window": 400000,
-        "max_output_tokens": 128000,
-        "capabilities": ["tools", "streaming"],
-    },
-    "gpt-5.1-codex": {
-        "id": "gpt-5.1-codex",
-        "display_name": "GPT-5.1-Codex",
-        "context_window": 400000,
-        "max_output_tokens": 128000,
-        "capabilities": ["tools", "streaming"],
-    },
-    "gpt-5-codex": {
-        "id": "gpt-5-codex",
-        "display_name": "GPT-5-Codex",
-        "context_window": 400000,
-        "max_output_tokens": 128000,
-        "capabilities": ["tools", "streaming"],
-    },
-    "gpt-5-codex-mini": {
-        "id": "gpt-5-codex-mini",
-        "display_name": "GPT-5-Codex Mini",
-        "context_window": 400000,
-        "max_output_tokens": 128000,
-        "capabilities": ["tools", "streaming", "fast"],
-    },
     "gpt-5.2": {
         "id": "gpt-5.2",
         "display_name": "GPT-5.2",
         "context_window": 400000,
         "max_output_tokens": 128000,
         "capabilities": ["tools", "streaming"],
-    },
-    "gpt-5.1": {
-        "id": "gpt-5.1",
-        "display_name": "GPT-5.1",
-        "context_window": 400000,
-        "max_output_tokens": 128000,
-        "capabilities": ["tools", "streaming"],
-    },
-    "gpt-5": {
-        "id": "gpt-5",
-        "display_name": "GPT-5",
-        "context_window": 400000,
-        "max_output_tokens": 128000,
-        "capabilities": ["tools", "streaming"],
-    },
-    "codex-mini-latest": {
-        "id": "codex-mini-latest",
-        "display_name": "Codex Mini (Latest)",
-        "context_window": 200000,
-        "max_output_tokens": 100000,
-        "capabilities": ["tools", "streaming", "fast"],
     },
 }
 
@@ -205,8 +149,8 @@ class CodexProvider:
         self.coordinator = coordinator
 
         # Configuration
-        self.default_model = self.config.get(
-            "default_model", self.config.get("model", DEFAULT_MODEL)
+        self.default_model = self._normalize_default_model(
+            self.config.get("default_model", self.config.get("model"))
         )
         self.timeout = self.config.get("timeout", DEFAULT_TIMEOUT)
         self.debug = self.config.get("debug", False)
@@ -275,6 +219,34 @@ class CodexProvider:
         # Filtered tool calls fed back to Codex as unavailable
         self._filtered_tool_calls: list[dict[str, Any]] = []
 
+    def _normalize_default_model(self, model: Any | None) -> str:
+        """Normalize default model config and enforce GPT-5.2-only support."""
+        if model is None:
+            return DEFAULT_MODEL
+
+        normalized = str(model).strip()
+        if normalized in MODELS:
+            return normalized
+
+        logger.warning(
+            "[PROVIDER] Unsupported default_model=%r; falling back to %s. "
+            "Supported models: %s",
+            model,
+            DEFAULT_MODEL,
+            ",".join(MODELS.keys()),
+        )
+        return DEFAULT_MODEL
+
+    def _validate_supported_model(self, model: str) -> str:
+        """Validate requested model against provider-supported models."""
+        if model in MODELS:
+            return model
+
+        supported = ", ".join(MODELS.keys())
+        raise ValueError(
+            f"Unsupported model '{model}'. This provider only supports GPT-5.2 models: {supported}"
+        )
+
     def _get_amplifier_session_id(self) -> str | None:
         """Get the Amplifier session ID from the coordinator."""
         if not self.coordinator:
@@ -334,7 +306,7 @@ class CodexProvider:
                     display_name="Reasoning Level",
                     field_type="choice",
                     prompt="Select reasoning level for Codex model",
-                    choices=["none", "minimal", "low", "medium", "high", "xhigh"],
+                    choices=["none", "low", "medium", "high", "xhigh"],
                     required=False,
                     default="medium",
                     requires_model=True,
@@ -615,6 +587,7 @@ class CodexProvider:
         model = (
             kwargs.get("model") or getattr(request, "model", None) or self.default_model
         )
+        model = self._validate_supported_model(str(model))
 
         request_metadata = getattr(request, "metadata", None) or {}
         reasoning_effort = self._resolve_reasoning_effort(
@@ -963,10 +936,6 @@ class CodexProvider:
         normalized_model = str(model).strip().lower()
         if normalized_model.startswith("gpt-5.2"):
             return {"none", "low", "medium", "high", "xhigh"}
-        if normalized_model.startswith("gpt-5.1"):
-            return {"none", "low", "medium", "high"}
-        if normalized_model.startswith("gpt-5"):
-            return {"minimal", "low", "medium", "high"}
 
         return None
 
@@ -980,12 +949,13 @@ class CodexProvider:
         allowed = self._allowed_reasoning_efforts_for_model(model)
         if not allowed:
             logger.warning(
-                "[PROVIDER] Passing through reasoning_effort=%s for unknown model=%s; "
-                "model-specific validation not applied",
+                "[PROVIDER] Ignoring reasoning_effort=%s for unsupported model=%s. "
+                "Supported models: %s",
                 reasoning_effort,
                 model,
+                ",".join(MODELS.keys()),
             )
-            return reasoning_effort
+            return None
 
         if reasoning_effort not in allowed:
             logger.warning(

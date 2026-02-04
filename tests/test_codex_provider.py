@@ -265,7 +265,7 @@ def test_codex_get_info_exposes_model_then_reasoning_config_fields():
     assert field.field_type == "choice"
     assert field.default == "medium"
     assert field.required is False
-    assert field.choices == ["none", "minimal", "low", "medium", "high", "xhigh"]
+    assert field.choices == ["none", "low", "medium", "high", "xhigh"]
     assert field.requires_model is True
 
 
@@ -1331,12 +1331,12 @@ def test_codex_builds_command_with_reasoning_effort():
     assert cmd[idx + 1] == 'model_reasoning_effort="high"'
 
 
-def test_codex_ignores_reasoning_effort_not_supported_by_model():
-    provider = CodexProvider(config={"reasoning_effort": "none"})
+def test_codex_ignores_reasoning_effort_not_supported_by_gpt_5_2():
+    provider = CodexProvider(config={"reasoning_effort": "minimal"})
 
     effort = provider._resolve_reasoning_effort(
         ChatRequest(messages=[Message(role="user", content="Hi")]),
-        model="gpt-5-codex",
+        model="gpt-5.2-codex",
     )
 
     assert effort is None
@@ -1394,7 +1394,7 @@ def test_codex_reasoning_effort_hyphenated_keys_and_case_insensitivity():
     assert effort == "low"
 
 
-def test_codex_reasoning_effort_gpt_5_1_validation():
+def test_codex_reasoning_effort_gpt_5_2_validation():
     provider = CodexProvider()
 
     effort = provider._resolve_reasoning_effort(
@@ -1402,16 +1402,16 @@ def test_codex_reasoning_effort_gpt_5_1_validation():
             messages=[Message(role="user", content="Hi")],
             metadata={"reasoning_effort": "none"},
         ),
-        model="gpt-5.1-codex",
+        model="gpt-5.2-codex",
     )
     assert effort == "none"
 
     effort = provider._resolve_reasoning_effort(
         ChatRequest(
             messages=[Message(role="user", content="Hi")],
-            metadata={"reasoning_effort": "xhigh"},
+            metadata={"reasoning_effort": "minimal"},
         ),
-        model="gpt-5.1-codex",
+        model="gpt-5.2-codex",
     )
     assert effort is None
 
@@ -1432,7 +1432,7 @@ def test_codex_reasoning_effort_invalid_value_logs_warning(caplog):
     assert "Ignoring invalid reasoning_effort" in caplog.text
 
 
-def test_codex_reasoning_effort_unknown_model_passthrough_logs_warning(caplog):
+def test_codex_reasoning_effort_unknown_model_is_ignored(caplog):
     provider = CodexProvider()
 
     with caplog.at_level(logging.WARNING):
@@ -1444,8 +1444,8 @@ def test_codex_reasoning_effort_unknown_model_passthrough_logs_warning(caplog):
             model="custom-model",
         )
 
-    assert effort == "high"
-    assert "Passing through reasoning_effort" in caplog.text
+    assert effort is None
+    assert "Ignoring reasoning_effort=high for unsupported model=custom-model" in caplog.text
 
 
 def test_codex_adjusts_minimal_reasoning_when_search_enabled(caplog):
@@ -1453,7 +1453,7 @@ def test_codex_adjusts_minimal_reasoning_when_search_enabled(caplog):
 
     with caplog.at_level(logging.WARNING):
         adjusted = provider._adjust_reasoning_effort_for_search(
-            model="gpt-5-codex", reasoning_effort="minimal"
+            model="gpt-5.2-codex", reasoning_effort="minimal"
         )
 
     assert adjusted == "low"
@@ -1464,7 +1464,7 @@ def test_codex_keeps_reasoning_effort_when_search_disabled():
     provider = CodexProvider(config={"search": False})
 
     adjusted = provider._adjust_reasoning_effort_for_search(
-        model="gpt-5-codex", reasoning_effort="minimal"
+        model="gpt-5.2-codex", reasoning_effort="minimal"
     )
 
     assert adjusted == "minimal"
@@ -1482,6 +1482,22 @@ def test_codex_builds_resume_command_with_reasoning_effort():
 
     assert "resume" in cmd
     assert "--config" in cmd
+
+
+def test_codex_falls_back_when_default_model_is_unsupported(caplog):
+    with caplog.at_level(logging.WARNING):
+        provider = CodexProvider(config={"default_model": "gpt-5-codex"})
+
+    assert provider.default_model == "gpt-5.2-codex"
+    assert "Unsupported default_model='gpt-5-codex'; falling back to gpt-5.2-codex" in caplog.text
+
+
+def test_codex_complete_rejects_unsupported_request_model():
+    provider = CodexProvider(config={"skip_git_repo_check": True})
+    request = ChatRequest(messages=[Message(role="user", content="Hi")])
+
+    with pytest.raises(ValueError, match="Unsupported model 'gpt-5-codex'"):
+        asyncio.run(provider.complete(request, model="gpt-5-codex"))
 
 
 def test_codex_warns_when_resume_returns_different_session_id(monkeypatch, caplog):
