@@ -61,12 +61,19 @@ class CodexChatResponse(ChatResponse):
 METADATA_SESSION_ID = "codex:session_id"
 METADATA_DURATION_MS = "codex:duration_ms"
 
-DEFAULT_MODEL = "gpt-5.2-codex"
+DEFAULT_MODEL = "gpt-5.3-codex"
 DEFAULT_TIMEOUT = 300.0
 DEFAULT_MAX_TOKENS = 64000
 
 # Model specifications (Codex CLI + GPT-5 family)
 MODELS = {
+    "gpt-5.3-codex": {
+        "id": "gpt-5.3-codex",
+        "display_name": "GPT-5.3-Codex",
+        "context_window": 400000,
+        "max_output_tokens": 128000,
+        "capabilities": ["tools", "streaming"],
+    },
     "gpt-5.2-codex": {
         "id": "gpt-5.2-codex",
         "display_name": "GPT-5.2-Codex",
@@ -961,6 +968,8 @@ class CodexProvider:
             return None
 
         normalized_model = str(model).strip().lower()
+        if normalized_model.startswith("gpt-5.3"):
+            return {"none", "low", "medium", "high", "xhigh"}
         if normalized_model.startswith("gpt-5.2"):
             return {"none", "low", "medium", "high", "xhigh"}
         if normalized_model.startswith("gpt-5.1"):
