@@ -34,15 +34,8 @@ codex login
 
 - `gpt-5.3-codex` (default)
 - `gpt-5.2-codex`
-- `gpt-5.1-codex`
-- `gpt-5.1-codex-mini`
-- `gpt-5.1-codex-max`
-- `gpt-5-codex`
-- `gpt-5-codex-mini`
+- `gpt-5.3`
 - `gpt-5.2`
-- `gpt-5.1`
-- `gpt-5`
-- `codex-mini-latest`
 
 ## Configuration
 
@@ -61,12 +54,12 @@ config = {
     ask_for_approval = null, # Optional: Codex CLI approval policy
     network_access = null,   # Optional: override network access (bool)
     add_dir = [],       # Optional: additional writable directories
-    reasoning_effort = "medium" # Optional: none | minimal | low | medium | high | xhigh (varies by model)
+    reasoning_effort = "medium" # Optional: none | low | medium | high | xhigh (varies by model)
 }
 ```
 
-When `search = true`, `reasoning_effort = "minimal"` is automatically adjusted to
-`"low"` due to an upstream incompatibility between minimal reasoning and web search.
+When `search = true`, `reasoning_effort = "minimal"` (for custom/unknown models) is
+automatically adjusted to `"low"` due to an upstream incompatibility.
 
 ## Permissions
 
@@ -95,9 +88,4 @@ settings, and only escalate to `workspace-write` or `full_auto` when required.
 - Codex CLI runs in read-only mode by default; set `sandbox` or `full_auto` only if intended.
 - `reasoning_effort` maps to Codex's `model_reasoning_effort` config override and is validated per model. Supported values vary by model family:
   - **GPT-5.3 Codex / GPT-5.2 Codex** (`gpt-5.3-codex`, `gpt-5.2-codex`): `low`, `medium`, `high`, `xhigh`
-  - **GPT-5.1 Codex Max** (`gpt-5.1-codex-max`): `low`, `medium`, `high`, `xhigh`
-  - **GPT-5.1 Codex / Codex Mini** (`gpt-5.1-codex`, `gpt-5.1-codex-mini`): `low`, `medium`, `high`
-  - **GPT-5 Codex / Codex Mini** (`gpt-5-codex`, `gpt-5-codex-mini`): `low`, `medium`, `high`
-  - **GPT-5.2 (non-Codex)** (`gpt-5.2`): `none`, `low`, `medium`, `high`, `xhigh`
-  - **GPT-5.1 (non-Codex)** (`gpt-5.1`): `none`, `low`, `medium`, `high`
-  - **GPT-5 (non-Codex)** (`gpt-5`): `minimal`, `low`, `medium`, `high`
+  - **GPT-5.3 / GPT-5.2 (non-Codex)** (`gpt-5.3`, `gpt-5.2`): `none`, `low`, `medium`, `high`, `xhigh`

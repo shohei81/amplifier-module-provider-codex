@@ -265,7 +265,7 @@ def test_codex_get_info_exposes_model_then_reasoning_config_fields():
     assert field.field_type == "choice"
     assert field.default == "medium"
     assert field.required is False
-    assert field.choices == ["none", "minimal", "low", "medium", "high", "xhigh"]
+    assert field.choices == ["none", "low", "medium", "high", "xhigh"]
     assert field.requires_model is True
 
 
@@ -1336,7 +1336,7 @@ def test_codex_ignores_reasoning_effort_not_supported_by_model():
 
     effort = provider._resolve_reasoning_effort(
         ChatRequest(messages=[Message(role="user", content="Hi")]),
-        model="gpt-5-codex",
+        model="gpt-5.2-codex",
     )
 
     assert effort is None
@@ -1414,70 +1414,48 @@ def test_codex_reasoning_effort_hyphenated_keys_and_case_insensitivity():
     assert effort == "low"
 
 
-def test_codex_reasoning_effort_gpt_5_1_validation():
+def test_codex_reasoning_effort_gpt_5_2_non_codex_validation():
     provider = CodexProvider()
-
-    effort = provider._resolve_reasoning_effort(
-        ChatRequest(
-            messages=[Message(role="user", content="Hi")],
-            metadata={"reasoning_effort": "low"},
-        ),
-        model="gpt-5.1-codex",
-    )
-    assert effort == "low"
-
-    effort = provider._resolve_reasoning_effort(
-        ChatRequest(
-            messages=[Message(role="user", content="Hi")],
-            metadata={"reasoning_effort": "xhigh"},
-        ),
-        model="gpt-5.1-codex",
-    )
-    assert effort is None
-
-
-def test_codex_reasoning_effort_gpt_5_1_codex_max_validation():
-    provider = CodexProvider()
-
-    effort = provider._resolve_reasoning_effort(
-        ChatRequest(
-            messages=[Message(role="user", content="Hi")],
-            metadata={"reasoning_effort": "xhigh"},
-        ),
-        model="gpt-5.1-codex-max",
-    )
-    assert effort == "xhigh"
 
     effort = provider._resolve_reasoning_effort(
         ChatRequest(
             messages=[Message(role="user", content="Hi")],
             metadata={"reasoning_effort": "none"},
         ),
-        model="gpt-5.1-codex-max",
+        model="gpt-5.2",
     )
-    assert effort is None
-
-
-def test_codex_reasoning_effort_gpt_5_codex_validation():
-    provider = CodexProvider()
+    assert effort == "none"
 
     effort = provider._resolve_reasoning_effort(
         ChatRequest(
             messages=[Message(role="user", content="Hi")],
             metadata={"reasoning_effort": "minimal"},
         ),
-        model="gpt-5-codex",
+        model="gpt-5.2",
     )
     assert effort is None
+
+
+def test_codex_reasoning_effort_gpt_5_3_non_codex_validation():
+    provider = CodexProvider()
 
     effort = provider._resolve_reasoning_effort(
         ChatRequest(
             messages=[Message(role="user", content="Hi")],
-            metadata={"reasoning_effort": "medium"},
+            metadata={"reasoning_effort": "xhigh"},
         ),
-        model="gpt-5-codex-mini",
+        model="gpt-5.3",
     )
-    assert effort == "medium"
+    assert effort == "xhigh"
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning_effort": "minimal"},
+        ),
+        model="gpt-5.3",
+    )
+    assert effort is None
 
 
 def test_codex_reasoning_effort_invalid_value_logs_warning(caplog):
@@ -1517,7 +1495,7 @@ def test_codex_adjusts_minimal_reasoning_when_search_enabled(caplog):
 
     with caplog.at_level(logging.WARNING):
         adjusted = provider._adjust_reasoning_effort_for_search(
-            model="gpt-5-codex", reasoning_effort="minimal"
+            model="gpt-5.2-codex", reasoning_effort="minimal"
         )
 
     assert adjusted == "low"
@@ -1528,7 +1506,7 @@ def test_codex_keeps_reasoning_effort_when_search_disabled():
     provider = CodexProvider(config={"search": False})
 
     adjusted = provider._adjust_reasoning_effort_for_search(
-        model="gpt-5-codex", reasoning_effort="minimal"
+        model="gpt-5.2-codex", reasoning_effort="minimal"
     )
 
     assert adjusted == "minimal"
