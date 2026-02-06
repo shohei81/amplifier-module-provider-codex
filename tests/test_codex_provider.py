@@ -255,7 +255,7 @@ def test_codex_get_info_exposes_model_then_reasoning_config_fields():
     )
     assert model_field is not None
     assert model_field.field_type == "choice"
-    assert model_field.default == "gpt-5.2-codex"
+    assert model_field.default == "gpt-5.3-codex"
     assert model_field.required is False
     assert model_field.choices == list(MODELS.keys())
 
@@ -1342,7 +1342,7 @@ def test_codex_ignores_reasoning_effort_not_supported_by_gpt_5_2():
     assert effort is None
 
 
-def test_codex_allows_none_for_gpt_5_2_models():
+def test_codex_allows_extended_reasoning_for_gpt_5_2_and_gpt_5_3_models():
     provider = CodexProvider()
 
     effort = provider._resolve_reasoning_effort(
@@ -1354,6 +1354,16 @@ def test_codex_allows_none_for_gpt_5_2_models():
     )
 
     assert effort == "none"
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning_effort": "xhigh"},
+        ),
+        model="gpt-5.3-codex",
+    )
+
+    assert effort == "xhigh"
 
 
 def test_codex_reasoning_effort_config_precedence_and_fallback():
