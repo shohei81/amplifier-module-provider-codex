@@ -61,15 +61,29 @@ class CodexChatResponse(ChatResponse):
 METADATA_SESSION_ID = "codex:session_id"
 METADATA_DURATION_MS = "codex:duration_ms"
 
-DEFAULT_MODEL = "gpt-5.2-codex"
+DEFAULT_MODEL = "gpt-5.3-codex"
 DEFAULT_TIMEOUT = 300.0
 DEFAULT_MAX_TOKENS = 64000
 
-# Model specifications (GPT-5.2 family only)
+# Model specifications (GPT-5.2/GPT-5.3 families only)
 MODELS = {
+    "gpt-5.3-codex": {
+        "id": "gpt-5.3-codex",
+        "display_name": "GPT-5.3-Codex",
+        "context_window": 400000,
+        "max_output_tokens": 128000,
+        "capabilities": ["tools", "streaming"],
+    },
     "gpt-5.2-codex": {
         "id": "gpt-5.2-codex",
         "display_name": "GPT-5.2-Codex",
+        "context_window": 400000,
+        "max_output_tokens": 128000,
+        "capabilities": ["tools", "streaming"],
+    },
+    "gpt-5.3": {
+        "id": "gpt-5.3",
+        "display_name": "GPT-5.3",
         "context_window": 400000,
         "max_output_tokens": 128000,
         "capabilities": ["tools", "streaming"],
@@ -220,7 +234,7 @@ class CodexProvider:
         self._filtered_tool_calls: list[dict[str, Any]] = []
 
     def _normalize_default_model(self, model: Any | None) -> str:
-        """Normalize default model config and enforce GPT-5.2-only support."""
+        """Normalize default model config and enforce GPT-5.2/GPT-5.3-only support."""
         if model is None:
             return DEFAULT_MODEL
 
@@ -934,6 +948,14 @@ class CodexProvider:
             return None
 
         normalized_model = str(model).strip().lower()
+        # Codex model variants have different constraints from base GPT variants.
+        if normalized_model.startswith("gpt-5.3-codex"):
+            return {"low", "medium", "high", "xhigh"}
+        if normalized_model.startswith("gpt-5.2-codex"):
+            return {"low", "medium", "high", "xhigh"}
+        if normalized_model.startswith("gpt-5.3"):
+            return {"none", "low", "medium", "high", "xhigh"}
+
         if normalized_model.startswith("gpt-5.2"):
             return {"none", "low", "medium", "high", "xhigh"}
 

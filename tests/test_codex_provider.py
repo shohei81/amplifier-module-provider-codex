@@ -255,7 +255,7 @@ def test_codex_get_info_exposes_model_then_reasoning_config_fields():
     )
     assert model_field is not None
     assert model_field.field_type == "choice"
-    assert model_field.default == "gpt-5.2-codex"
+    assert model_field.default == "gpt-5.3-codex"
     assert model_field.required is False
     assert model_field.choices == list(MODELS.keys())
 
@@ -1342,8 +1342,28 @@ def test_codex_ignores_reasoning_effort_not_supported_by_gpt_5_2():
     assert effort is None
 
 
-def test_codex_allows_none_for_gpt_5_2_models():
+def test_codex_reasoning_effort_gpt_5_2_and_gpt_5_3_codex_validation():
     provider = CodexProvider()
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning_effort": "xhigh"},
+        ),
+        model="gpt-5.2-codex",
+    )
+
+    assert effort == "xhigh"
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning_effort": "xhigh"},
+        ),
+        model="gpt-5.3-codex",
+    )
+
+    assert effort == "xhigh"
 
     effort = provider._resolve_reasoning_effort(
         ChatRequest(
@@ -1353,7 +1373,7 @@ def test_codex_allows_none_for_gpt_5_2_models():
         model="gpt-5.2-codex",
     )
 
-    assert effort == "none"
+    assert effort is None
 
 
 def test_codex_reasoning_effort_config_precedence_and_fallback():
@@ -1394,7 +1414,7 @@ def test_codex_reasoning_effort_hyphenated_keys_and_case_insensitivity():
     assert effort == "low"
 
 
-def test_codex_reasoning_effort_gpt_5_2_validation():
+def test_codex_reasoning_effort_gpt_5_2_non_codex_validation():
     provider = CodexProvider()
 
     effort = provider._resolve_reasoning_effort(
@@ -1402,7 +1422,7 @@ def test_codex_reasoning_effort_gpt_5_2_validation():
             messages=[Message(role="user", content="Hi")],
             metadata={"reasoning_effort": "none"},
         ),
-        model="gpt-5.2-codex",
+        model="gpt-5.2",
     )
     assert effort == "none"
 
@@ -1411,7 +1431,29 @@ def test_codex_reasoning_effort_gpt_5_2_validation():
             messages=[Message(role="user", content="Hi")],
             metadata={"reasoning_effort": "minimal"},
         ),
-        model="gpt-5.2-codex",
+        model="gpt-5.2",
+    )
+    assert effort is None
+
+
+def test_codex_reasoning_effort_gpt_5_3_non_codex_validation():
+    provider = CodexProvider()
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning_effort": "xhigh"},
+        ),
+        model="gpt-5.3",
+    )
+    assert effort == "xhigh"
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning_effort": "minimal"},
+        ),
+        model="gpt-5.3",
     )
     assert effort is None
 
@@ -1488,8 +1530,8 @@ def test_codex_falls_back_when_default_model_is_unsupported(caplog):
     with caplog.at_level(logging.WARNING):
         provider = CodexProvider(config={"default_model": "gpt-5-codex"})
 
-    assert provider.default_model == "gpt-5.2-codex"
-    assert "Unsupported default_model='gpt-5-codex'; falling back to gpt-5.2-codex" in caplog.text
+    assert provider.default_model == "gpt-5.3-codex"
+    assert "Unsupported default_model='gpt-5-codex'; falling back to gpt-5.3-codex" in caplog.text
 
 
 def test_codex_complete_rejects_unsupported_request_model():
