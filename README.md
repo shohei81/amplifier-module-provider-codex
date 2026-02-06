@@ -57,7 +57,8 @@ config = {
     reasoning_effort = "medium" # Optional: none | low | medium | high | xhigh
 }
 ```
-
+When `search = true`, `reasoning_effort = "minimal"` (for custom/unknown models) is
+automatically adjusted to `"low"` due to an upstream incompatibility.
 ## Permissions
 
 Codex CLI defaults are determined by your Codex CLI profile when `sandbox` is unset.
