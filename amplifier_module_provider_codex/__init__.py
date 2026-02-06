@@ -65,7 +65,7 @@ DEFAULT_MODEL = "gpt-5.3-codex"
 DEFAULT_TIMEOUT = 300.0
 DEFAULT_MAX_TOKENS = 64000
 
-# Model specifications (GPT-5.2 family only)
+# Model specifications (GPT-5.2/GPT-5.3 families only)
 MODELS = {
     "gpt-5.3-codex": {
         "id": "gpt-5.3-codex",
@@ -234,7 +234,7 @@ class CodexProvider:
         self._filtered_tool_calls: list[dict[str, Any]] = []
 
     def _normalize_default_model(self, model: Any | None) -> str:
-        """Normalize default model config and enforce GPT-5.2-only support."""
+        """Normalize default model config and enforce GPT-5.2/GPT-5.3-only support."""
         if model is None:
             return DEFAULT_MODEL
 

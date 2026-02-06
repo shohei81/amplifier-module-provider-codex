@@ -84,7 +84,7 @@ settings, and only escalate to `workspace-write` or `full_auto` when required.
   resume/caching stability across provider restarts.
 - Tool calls are emitted as `<tool_use>...</tool_use>` blocks and parsed from JSONL.
 - Codex CLI runs in read-only mode by default; set `sandbox` or `full_auto` only if intended.
-- This provider supports GPT-5.2/GPT-5.3 models only. Unsupported model settings are rejected (or defaulted to `gpt-5.2-codex` for `default_model`).
+- This provider supports GPT-5.2/GPT-5.3 models only. Unsupported model settings are rejected (or defaulted to `gpt-5.3-codex` for `default_model`).
 - `reasoning_effort` maps to Codex's `model_reasoning_effort` config override and is validated per model:
   - **GPT-5.3 Codex / GPT-5.2 Codex** (`gpt-5.3-codex`, `gpt-5.2-codex`): `low`, `medium`, `high`, `xhigh`
   - **GPT-5.3 / GPT-5.2 (non-Codex)** (`gpt-5.3`, `gpt-5.2`): `none`, `low`, `medium`, `high`, `xhigh`

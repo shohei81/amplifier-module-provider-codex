@@ -1530,8 +1530,8 @@ def test_codex_falls_back_when_default_model_is_unsupported(caplog):
     with caplog.at_level(logging.WARNING):
         provider = CodexProvider(config={"default_model": "gpt-5-codex"})
 
-    assert provider.default_model == "gpt-5.2-codex"
-    assert "Unsupported default_model='gpt-5-codex'; falling back to gpt-5.2-codex" in caplog.text
+    assert provider.default_model == "gpt-5.3-codex"
+    assert "Unsupported default_model='gpt-5-codex'; falling back to gpt-5.3-codex" in caplog.text
 
 
 def test_codex_complete_rejects_unsupported_request_model():
