@@ -1342,18 +1342,18 @@ def test_codex_ignores_reasoning_effort_not_supported_by_gpt_5_2():
     assert effort is None
 
 
-def test_codex_allows_extended_reasoning_for_gpt_5_2_and_gpt_5_3_models():
+def test_codex_reasoning_effort_gpt_5_2_and_gpt_5_3_codex_validation():
     provider = CodexProvider()
 
     effort = provider._resolve_reasoning_effort(
         ChatRequest(
             messages=[Message(role="user", content="Hi")],
-            metadata={"reasoning_effort": "none"},
+            metadata={"reasoning_effort": "xhigh"},
         ),
         model="gpt-5.2-codex",
     )
 
-    assert effort == "none"
+    assert effort == "xhigh"
 
     effort = provider._resolve_reasoning_effort(
         ChatRequest(
@@ -1364,6 +1364,16 @@ def test_codex_allows_extended_reasoning_for_gpt_5_2_and_gpt_5_3_models():
     )
 
     assert effort == "xhigh"
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning_effort": "none"},
+        ),
+        model="gpt-5.2-codex",
+    )
+
+    assert effort is None
 
 
 def test_codex_reasoning_effort_config_precedence_and_fallback():
@@ -1410,11 +1420,11 @@ def test_codex_reasoning_effort_gpt_5_2_validation():
     effort = provider._resolve_reasoning_effort(
         ChatRequest(
             messages=[Message(role="user", content="Hi")],
-            metadata={"reasoning_effort": "none"},
+            metadata={"reasoning_effort": "low"},
         ),
         model="gpt-5.2-codex",
     )
-    assert effort == "none"
+    assert effort == "low"
 
     effort = provider._resolve_reasoning_effort(
         ChatRequest(
@@ -1424,6 +1434,50 @@ def test_codex_reasoning_effort_gpt_5_2_validation():
         model="gpt-5.2-codex",
     )
     assert effort is None
+
+
+def test_codex_reasoning_effort_gpt_5_1_codex_max_validation():
+    provider = CodexProvider()
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning_effort": "xhigh"},
+        ),
+        model="gpt-5.1-codex-max",
+    )
+    assert effort == "xhigh"
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning_effort": "none"},
+        ),
+        model="gpt-5.1-codex-max",
+    )
+    assert effort is None
+
+
+def test_codex_reasoning_effort_gpt_5_codex_validation():
+    provider = CodexProvider()
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning_effort": "minimal"},
+        ),
+        model="gpt-5-codex",
+    )
+    assert effort is None
+
+    effort = provider._resolve_reasoning_effort(
+        ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            metadata={"reasoning_effort": "medium"},
+        ),
+        model="gpt-5-codex-mini",
+    )
+    assert effort == "medium"
 
 
 def test_codex_reasoning_effort_invalid_value_logs_warning(caplog):
