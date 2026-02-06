@@ -968,8 +968,18 @@ class CodexProvider:
             return None
 
         normalized_model = str(model).strip().lower()
-        if normalized_model.startswith("gpt-5.3"):
-            return {"none", "low", "medium", "high", "xhigh"}
+        # Codex model variants have different constraints from base GPT variants.
+        if normalized_model.startswith("gpt-5.3-codex"):
+            return {"low", "medium", "high", "xhigh"}
+        if normalized_model.startswith("gpt-5.2-codex"):
+            return {"low", "medium", "high", "xhigh"}
+        if normalized_model.startswith("gpt-5.1-codex-max"):
+            return {"low", "medium", "high", "xhigh"}
+        if normalized_model.startswith("gpt-5.1-codex"):
+            return {"low", "medium", "high"}
+        if normalized_model.startswith("gpt-5-codex"):
+            return {"low", "medium", "high"}
+
         if normalized_model.startswith("gpt-5.2"):
             return {"none", "low", "medium", "high", "xhigh"}
         if normalized_model.startswith("gpt-5.1"):

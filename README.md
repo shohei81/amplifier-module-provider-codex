@@ -94,6 +94,10 @@ settings, and only escalate to `workspace-write` or `full_auto` when required.
 - Tool calls are emitted as `<tool_use>...</tool_use>` blocks and parsed from JSONL.
 - Codex CLI runs in read-only mode by default; set `sandbox` or `full_auto` only if intended.
 - `reasoning_effort` maps to Codex's `model_reasoning_effort` config override and is validated per model. Supported values vary by model family:
-  - **GPT-5.2/GPT-5.3 models** (e.g. `gpt-5.3-codex`, `gpt-5.2-codex`): `none`, `low`, `medium`, `high`, `xhigh`
-  - **GPT-5.1 models** (e.g. `gpt-5.1-codex`, `gpt-5.1-codex-mini`, `gpt-5.1-codex-max`): `none`, `low`, `medium`, `high`
-  - **GPT-5 models** (e.g. `gpt-5-codex`, `gpt-5-codex-mini`): `minimal`, `low`, `medium`, `high`
+  - **GPT-5.3 Codex / GPT-5.2 Codex** (`gpt-5.3-codex`, `gpt-5.2-codex`): `low`, `medium`, `high`, `xhigh`
+  - **GPT-5.1 Codex Max** (`gpt-5.1-codex-max`): `low`, `medium`, `high`, `xhigh`
+  - **GPT-5.1 Codex / Codex Mini** (`gpt-5.1-codex`, `gpt-5.1-codex-mini`): `low`, `medium`, `high`
+  - **GPT-5 Codex / Codex Mini** (`gpt-5-codex`, `gpt-5-codex-mini`): `low`, `medium`, `high`
+  - **GPT-5.2 (non-Codex)** (`gpt-5.2`): `none`, `low`, `medium`, `high`, `xhigh`
+  - **GPT-5.1 (non-Codex)** (`gpt-5.1`): `none`, `low`, `medium`, `high`
+  - **GPT-5 (non-Codex)** (`gpt-5`): `minimal`, `low`, `medium`, `high`
